@@ -24,8 +24,8 @@ like) are skipped: those parts are not ported (non-goals in design).
 
 ## 1. Step A decision record
 
-- [ ] 1.1 Write ADR A (next free number, status «предложено»). It records D1–D8, the non-goals,
-      and these changes:
+- [ ] 1.1 Write ADR A (next free number, status «предложено»). It records D1–D8, D11–D15, the
+      non-goals (including «no ouroboros core change»), and these changes:
       - `scope` in `POST /chat/turns`;
       - the `doc_id`/`offset` arguments;
       - one finish per turn and the event `turn_documents`;
@@ -34,7 +34,10 @@ like) are skipped: those parts are not ported (non-goals in design).
       - one queue per turn, which replaces the "per `LoopSession`" wording of ADR-0043 p. 4 and
         ADR-0092, with report-loop opening inside the queue (D3);
       - the departure from RFA: `all_workspace` lists never-parsed documents;
-      - the `text_pages`/`profile_id` columns.
+      - the `text_pages`/`profile_id` columns;
+      - one deadline per turn, set by the first loop (D11);
+      - `aifa_state()` among several loops answers with the turn overview (D12);
+      - the file names in `ПРИНЯТО` (D14).
 
       In the same branch, update:
       - `CONTRACTS.md` §1 (`scope`, `turn_documents`);
@@ -109,6 +112,15 @@ like) are skipped: those parts are not ported (non-goals in design).
       - the fake raising → the plain listing plus the "ранжирование недоступно" note.
 
       Fails before: refused with "pages и query нужны вместе с doc_id".
+- [ ] 3.3 Case facts in the listing (D14). Each entry states the number of metric facts of the
+      document's active version in the turn's Case, read from the Case artifact index by
+      `document_version` in one query per page. Tests in `tests/loop_tools/test_read_tools.py`:
+      - a Case with two facts of A and none of B → A's entry says 2, B's says 0. Fails before: no
+        such field.
+      - a fact of A's replaced version is not counted;
+      - with `document_text` patched to raise, the count still answers.
+      - Producer/consumer: `CaseRuntime` artifact index → `ouro_view.documents`. Allowed fake: none
+        (SQLite Case store).
 
 ## 4. Loops per document
 
@@ -148,7 +160,13 @@ like) are skipped: those parts are not ported (non-goals in design).
       - `aifa_register_atom(doc_id=B)` registers only into B;
       - `aifa_atoms(doc_id=B)` shows B's registry;
       - `aifa_state(artifact_ids=[e1])` returns A's artifact;
-      - `aifa_wait` with loops ending 12:00 and 12:10 waits until 12:10;
+      - a subtask context (`task_id` ≠ `root_task_id`) with two loops and no `doc_id` on
+        `aifa_register_atom` → `неверные_аргументы` listing A and B; a subtask `aifa_open(doc_id=C)`
+        → `не_та_роль` (D13);
+      - alternating moves on an IFRS bank (A) and an RSBU company (B): each move validates metric
+        codes against its own loop's registry, while the Case head passport was last written by
+        the other loop (D15). Fails before if any goal channel plans with `run_passport=None`; the
+        fix passes the loop's passport at that call site;
       - A deleted → `aifa_move(doc_id=A)` gives `нет_документа`, with no new Case document version;
       - concurrent moves on A and B serialise (gated fake executor), which guards the 4.1 queue;
       - alternating moves A → B → A succeed, and both loops' artifacts stay readable.
@@ -163,7 +181,8 @@ like) are skipped: those parts are not ported (non-goals in design).
       Tests:
       - evidence `e1` (A) and `e2` (B) are accepted;
       - exactly one `turn_documents` with `[A, B]` before the `typed_result` events;
-      - `aifa_move(doc_id=A)` afterwards → `цикл_закрыт`.
+      - `aifa_move(doc_id=A)` afterwards → `цикл_закрыт`;
+      - the `ПРИНЯТО` text names the file names of A and B (D14).
 
       Update the shared SSE fixtures (C1.2) and the golden normaliser in `aifa/tests/golden/`.
       Verify: `aifa/tests` green.
@@ -172,7 +191,21 @@ like) are skipped: those parts are not ported (non-goals in design).
       - `aifa_finish` closes both restored loops;
       - a loop whose document text is gone is not restored;
       - `_sweep(run_id)` deletes the index and both `run_id/<doc>` states.
-- [ ] 4.7 Single-document path. Run `uv run pytest aifa/tests/contract` and
+- [ ] 4.7 One turn deadline (D11) in `loop_desk.py`/`loop_opening.py` and `goal_tools.py:157`.
+      Tests in `tests/loop_tools/test_multi_document_loops.py` with a frozen clock:
+      - A opens at 12:00 (limit 1200 s), B at 12:15 → B's `limits.max_wall_seconds` is 300, and a move
+        on B at 12:21 gets `ЛИМИТ`. Fails before: B runs until 12:35.
+      - `aifa_wait(task_id)` at 12:18 with `wait_sec=240` returns by 12:20;
+      - after a restore, B keeps the shortened limit;
+      - a single loop's limit is unchanged.
+- [ ] 4.8 Turn overview (D12): `aifa_state()` without arguments among several loops →
+      `ouro_view.turn_overview`. Tests:
+      - loops on A and B and C unopened → the overview lists A and B with profile and moves, C as
+        not opened, and the deadline. Fails before: `неверные_аргументы`.
+      - it holds no registry or artifact text;
+      - it answers while the turn queue is held;
+      - one loop → the same answer as before (C3.x green without edits).
+- [ ] 4.9 Single-document path. Run `uv run pytest aifa/tests/contract` and
       `uv run --project aifa/finengine pytest aifa/finengine/tests/loop_tools
       aifa/finengine/tests/dynamic_run`. Verify: green without edits to existing assertions, except
       the listing fields and the added `turn_documents` event in golden traces.
@@ -184,10 +217,13 @@ like) are skipped: those parts are not ported (non-goals in design).
       - `skills/aifa-planning/SKILL.md`, section «Несколько документов»: the listing and
         `aifa_doc(query)`; open only what the question needs; `doc_id` on calls; one move per
         document, up to three goals in it (ADR-0089); one `aifa_finish`; put `doc_id` into
-        subtask task texts.
+        subtask task texts; name the files used in the reply; on a follow-up, read the listing
+        and cite Case facts of earlier turns before opening loops (D14).
       - `skills/aifa-atom-author/SKILL.md`: pass the task's `doc_id` to `aifa_register_atom` and
         `aifa_report`.
-      - `skills/aifa-plan-author/SKILL.md`: the plan names the documents it works on.
+      - `skills/aifa-plan-author/SKILL.md`: with several loops, read the overview
+        (`aifa_state()`), then `aifa_state(doc_id=…)` per loop; every move step names its
+        `doc_id`; facts already in the Case are inputs, not steps (D12, D14).
 
       Verify: new assertions in `skills/aifa-engine/tests/test_planning_text.py` and
       `test_atom_author_text.py` fail before and pass after.
@@ -290,9 +326,12 @@ like) are skipped: those parts are not ported (non-goals in design).
         numbers match the table;
       - «Все документы папки» over a folder of 10+ reports → `aifa_doc(query)` in the trace, and
         only the needed loops open;
-      - a five-bank peer turn finishes within `OUROBOROS_HARD_TIMEOUT_SEC` (1800 s). Record its
-        wall time; if it does not finish, record the parallel-loops revisit (D3) in `PROGRESS.md`
-        §4;
+      - a five-bank peer turn ends with an answer (finalize, or `ЛИМИТ` then finalize) before
+        the shared deadline, and never with `hard_timeout`. Record its wall time; if it hits
+        `ЛИМИТ`, record the parallel-loops revisit (D3) in `PROGRESS.md` §4;
+      - a follow-up «а теперь сравни с ВТБ» after a Сбербанк turn → the trace cites the first
+        turn's fact ids, and no move on Сбербанк's report;
+      - a turn with a subtask atom among two loops → the subtask's calls carry `doc_id`;
       - a single-report turn → the same as before.
 - [ ] 9.4 Add `PROGRESS.md` §1/§3/§4 entries and run `graphify update .`. Verify: the entries
       exist, and the rebuild exits 0.

@@ -116,16 +116,17 @@ ids. A record in the projection SHALL NOT by itself grant access.
 - **WHEN** a search is limited to documents [B, C] and A's chunks match best
 - **THEN** no hit from A is returned
 
-### Requirement: Document selection fuses three rankings inside an allowed set
+### Requirement: Document selection fuses card and chunk rankings inside an allowed set
 
 Selecting documents SHALL run over an allowed set of document ids, optionally filtered to one
-workspace. It SHALL fuse, by reciprocal rank fusion with k = 60:
+workspace. In the default mode `hybrid` it SHALL fuse, by reciprocal rank fusion with k = 60:
 - BM25 over card fields;
 - kNN over card vectors;
 - the documents owning the top chunk hits.
 
-The candidate pool SHALL grow with the number of allowed documents, as in RFA. Results SHALL be
-document ids with scores, highest first.
+In the mode `lexical` the kNN ranking SHALL be left out and the chunk ranking SHALL be BM25
+only. The candidate pool SHALL grow with the number of allowed documents, as in RFA. Results
+SHALL be document ids with scores, highest first.
 
 #### Scenario: A weak card does not hide a strong document
 
@@ -137,15 +138,17 @@ document ids with scores, highest first.
 - **WHEN** the allowed set holds documents of folders F1 and F2 and no workspace filter is given
 - **THEN** documents of both folders can be selected
 
-### Requirement: Chunk retrieval is hybrid inside the allowed documents
+### Requirement: Chunk retrieval runs inside the selected documents in two modes
 
-Retrieving chunks SHALL run BM25 and kNN over chunks of the allowed documents only, and fuse them
-by reciprocal rank fusion with k = 60. Each hit SHALL carry `document_id`, `chunk_id`, page,
-section path and content.
+Retrieving chunks SHALL run over chunks of the selected documents only. The default mode
+`hybrid` SHALL run BM25 and kNN and fuse them by reciprocal rank fusion with k = 60; the mode
+`lexical` SHALL run BM25 only, with no embedding call. Each hit SHALL carry `document_id`,
+`chunk_id`, page, section path and content.
 
 #### Scenario: Paraphrased question
 
-- **WHEN** a chunk says «риск ликвидности» and the query is «проблемы с ликвидностью»
+- **WHEN** a chunk says «риск ликвидности» and the query in mode `hybrid` is «проблемы с
+  ликвидностью»
 - **THEN** the chunk is among the hits
 
 ### Requirement: Embeddings come from one configured API provider per index
@@ -183,20 +186,67 @@ repeat.
 - **WHEN** the index volume is lost and reconcile runs on a fresh index
 - **THEN** every ready document is indexed again, whatever its recorded state
 
-### Requirement: aifa_search returns chunks from the turn's documents
+### Requirement: aifa_search selects documents first, then returns their chunks
 
-`aifa_search` SHALL take `query`, optional `doc_ids` (a subset of the turn's documents) and an
-optional `limit` from 1 to 10 (default 5). It SHALL return chunks with doc id, page, section and
-text, within the result limit. It SHALL be read-only, answer without waiting for changing calls,
-and be available after `aifa_open` exactly when `aifa_doc` is.
+`aifa_search` SHALL take `query`, optional `doc_ids` (a subset of the turn's documents), an
+optional `limit` from 1 to 10, and an optional `mode` of `hybrid` (the default) or `lexical`.
+Without `doc_ids` it SHALL first select documents by the query and SHALL then retrieve chunks
+only inside the selected documents; with `doc_ids` the selection step SHALL be skipped. It SHALL
+return chunks with doc id, page, section and text, within the result limit. It SHALL be
+read-only, answer without waiting for changing calls, and be available after `aifa_open` exactly
+when `aifa_doc` is.
 
 #### Scenario: Foreign doc_id
 
 - **WHEN** the planner calls `aifa_search(query="риски", doc_ids=["Z"])` and Z is not a turn document
 - **THEN** the answer is `ОТКАЗ нет_документа`
 
-#### Scenario: Search down during a turn
+#### Scenario: No doc_ids means selection first
 
-- **WHEN** the search service is unreachable and the planner calls `aifa_search`
-- **THEN** the answer is `ОТКАЗ поиск_недоступен`, saying that `aifa_doc` still reads pages, with
-  no advice to repeat the call
+- **WHEN** the turn holds ten documents and the planner calls `aifa_search(query="риски
+  ликвидности")` without `doc_ids`
+- **THEN** the returned chunks come only from the documents the selection step picked for that
+  query
+
+### Requirement: The answer size adapts to the query when no limit is given
+
+When `limit` is not given, a deterministic service heuristic SHALL size the answer: a broad
+qualitative query SHALL get more chunks, and a query naming metrics, indicators or figures
+SHALL get fewer, most relevant chunks. An explicit `limit` SHALL override the heuristic. The
+heuristic SHALL NOT call a model.
+
+#### Scenario: A broad query gets more chunks
+
+- **WHEN** the planner calls `aifa_search(query="что пишут о рисках")` without `limit`
+- **THEN** the answer holds more chunks than the answer to a metrics query would
+
+#### Scenario: A metrics query gets fewer, most relevant chunks
+
+- **WHEN** the planner calls `aifa_search(query="чистая прибыль 2024")` without `limit`
+- **THEN** the answer holds a small number of top-ranked chunks
+
+#### Scenario: Explicit limit wins
+
+- **WHEN** the planner calls `aifa_search(query="что пишут о рисках", limit=2)`
+- **THEN** the answer holds at most 2 chunks
+
+### Requirement: A search outage degrades the answer instead of refusing it
+
+When the search service is unreachable, `aifa_search` SHALL answer with a substring search over
+the published document texts of the allowed documents, and the answer SHALL be marked as
+degraded. The refusal `поиск_недоступен` SHALL be reserved for a failed embeddings provider —
+whose text SHALL name `mode="lexical"` as the working alternative — and for the case where
+neither the index nor the document texts are reachable.
+
+#### Scenario: OpenSearch down during a turn
+
+- **WHEN** the search service is unreachable and the planner calls `aifa_search(query="риски")`
+- **THEN** the answer holds matching passages from the published document texts and is marked as
+  degraded
+
+#### Scenario: Embeddings provider down
+
+- **WHEN** the embeddings provider is unreachable and the planner calls `aifa_search` in the
+  default mode
+- **THEN** the answer is `ОТКАЗ поиск_недоступен` naming `mode="lexical"`, with no advice to
+  repeat the call

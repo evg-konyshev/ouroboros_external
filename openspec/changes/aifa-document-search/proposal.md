@@ -37,15 +37,22 @@ BM25 + kNN + RRF (`AIFA_RFA/docs/MULTIDOCUMENT_TECHNICAL_SPEC.md` §6, code in
   - Deleting a document removes its records.
   - Rebuild and reconcile commands restore the projection from Postgres and S3, checking the
     registry against the index itself.
-- **Search functions** run over an allowed set of document ids, with an optional workspace
-  filter:
+- **Search is always two-stage**: first documents are selected, then chunks are retrieved only
+  inside the selected documents. Both stages run over an allowed set of document ids, with an
+  optional workspace filter:
   - document selection (card BM25 + card kNN + owners of top chunks, fused by RRF k=60);
-  - chunk retrieval (BM25 + kNN, RRF k=60).
+  - chunk retrieval (BM25 + kNN, RRF k=60) inside the selected documents.
 
-  Every hit is rechecked against the document registry.
-- **New tool `aifa_search(query, doc_ids?, limit?)`.** Read-only. It returns chunks with
-  `doc_id`, page, section and text, only from the turn's documents. If search is down, it refuses
-  with a new code `поиск_недоступен`.
+  Each stage has two modes: `hybrid` (the default, BM25 + kNN) and `lexical` (BM25 only, no
+  embedding call). Every hit is rechecked against the document registry.
+- **New tool `aifa_search(query, doc_ids?, limit?, mode?)`.** Read-only. Without `doc_ids` it
+  selects documents first and returns chunks only from the selected ones. `limit` is 1–10; when
+  it is not given, a deterministic service heuristic sizes the answer: a broad qualitative query
+  gets more chunks, a query naming metrics or figures gets fewer, most relevant ones. If the
+  search service is down, the tool does not refuse: it answers with a degraded substring search
+  over the published document texts, marked as degraded. The refusal code `поиск_недоступен`
+  remains for a failed embeddings provider (with a hint to retry as `mode="lexical"`) and for
+  the case where neither the index nor the document texts are reachable.
 - **Schema budget.** The current schemas use 6,127 of F4's target of 7,000. This change and
   `aifa-multi-document-turn` add tools and arguments that do not fit.
   - The ouroboros setting `OUROBOROS_INITIAL_EXTENSION_SCHEMA_BUDGET` (default 8,000) rises to

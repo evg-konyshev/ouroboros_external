@@ -15,7 +15,15 @@ shown instead of computing them.
 `cross_source_verification`) and `artifact_ids`: 2 to 20 ids of metric facts in this turn's Case,
 meaning extracted, calculated or user-provided metric evidence. It SHALL be read-only and answer
 without waiting for changing calls. Ids not in the Case, or not metric facts, SHALL be listed as
-missing; with fewer than two found it SHALL refuse with `нет_входов`.
+missing; with fewer than two found it SHALL refuse with `нет_входов`. Facts extracted by an earlier
+turn of the same Case SHALL be accepted like this turn's, and no open loop SHALL be required.
+
+#### Scenario: Comparing with a fact from the previous turn
+
+- **WHEN** the first turn of a chat extracted `e1` from Сбербанк's report, and the second turn
+  extracted `e2` from ВТБ's report
+- **THEN** `aifa_compare(preset="peer_comparison", artifact_ids=["e1", "e2"])` in the second turn
+  compares both, without a move on Сбербанк's report
 
 #### Scenario: Unknown preset
 

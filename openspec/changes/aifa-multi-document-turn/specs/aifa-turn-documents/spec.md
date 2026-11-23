@@ -201,8 +201,8 @@ with the new code `лимит_циклов` and open nothing; the open loops kee
 The following calls SHALL accept `doc_id`: `aifa_move`, `aifa_register_atom`, `aifa_report`,
 `aifa_atoms`, and `aifa_state` without artifact arguments. With exactly one open loop, `doc_id`
 MAY be omitted. With several open loops, a call without `doc_id` SHALL be refused with
-`неверные_аргументы` listing the open documents. Such a refusal SHALL spend no move and count in
-no loop's refusal streak.
+`неверные_аргументы` listing the open documents; `aifa_state` is the exception and answers with
+the turn overview. Such a refusal SHALL spend no move and count in no loop's refusal streak.
 
 #### Scenario: Move without doc_id among two loops
 
@@ -221,16 +221,95 @@ no loop's refusal streak.
 - **WHEN** loops on A and B are open and a subtask calls `aifa_register_atom(doc_id=B, …)`
 - **THEN** the atom is registered into the loop on B only
 
-### Requirement: Waiting for a subtask uses the turn's latest deadline
+### Requirement: A turn has one deadline shared by its loops
 
-`aifa_wait(task_id=…)` SHALL bound its wait by the latest wall-time deadline among the turn's open
-loops, without needing `doc_id`.
+The turn's deadline SHALL be fixed when its first report loop opens: that loop's open time plus the
+loop wall-time limit. Every later loop of the turn SHALL end at that same deadline, not at its own
+open time plus the limit. `ЛИМИТ` SHALL reach every loop of the turn at the same moment.
+`aifa_wait(task_id=…)` SHALL bound its wait by the turn's deadline, without needing `doc_id`.
 
-#### Scenario: Two loops with different deadlines
+#### Scenario: A late loop does not outlive the turn
 
-- **WHEN** the loop on A ends at 12:00 and the loop on B ends at 12:10, and the planner waits for a
-  subtask at 11:55
-- **THEN** the wait may last until 12:10
+- **WHEN** the loop on A opens at 12:00 with a 20-minute limit, and the loop on B opens at 12:15
+- **THEN** both loops end at 12:20, and a move on B after 12:20 is answered with `ЛИМИТ`
+
+#### Scenario: Waiting for a subtask
+
+- **WHEN** the turn's deadline is 12:20 and the planner waits for a subtask at 12:18 with
+  `wait_sec=240`
+- **THEN** the wait ends no later than 12:20
+
+### Requirement: A subtask reaches the turn's loops by document
+
+A subtask started by the turn's root SHALL reach the same turn and the same loops as its root.
+With several open loops, every loop-bound call of a subtask SHALL name `doc_id`, under the same
+rule and refusal as the root's calls. A subtask SHALL NOT open a loop.
+
+#### Scenario: Atom author among two loops
+
+- **WHEN** loops on A and B are open and a subtask calls `aifa_register_atom` without `doc_id`
+- **THEN** the call is refused with `неверные_аргументы` listing A and B, and no atom is registered
+
+#### Scenario: A subtask cannot open a loop
+
+- **WHEN** a subtask calls `aifa_open(doc_id=C)`
+- **THEN** the answer is `ОТКАЗ не_та_роль`, and no loop opens on C
+
+### Requirement: The turn overview lists the open loops
+
+`aifa_state` without `doc_id` and without artifact arguments SHALL answer, when several loops are
+open, with a turn overview instead of a refusal. It SHALL list:
+
+- for each open loop: `doc_id`, file name, company, period, profile, the moves used and left;
+- the documents of the set without a loop;
+- the turn's deadline.
+
+The overview SHALL be read-only, and SHALL hold no registry or artifact contents. With one open
+loop, the same call SHALL answer with that loop's state, as before.
+
+#### Scenario: The planner subtask reads the overview
+
+- **WHEN** loops on A and B are open, C is in the set without a loop, and the plan-author subtask
+  calls `aifa_state()`
+- **THEN** the answer lists the loops on A and B with their profiles and moves, lists C as not
+  opened, and gives the deadline
+- **AND** `aifa_state(doc_id=B)` then answers with the loop on B's full state
+
+### Requirement: The listing shows what earlier turns already extracted
+
+Each entry of the `aifa_doc` listing SHALL state how many metric facts of that document's active
+version the turn's Case already holds, counted without loading document texts. Such facts SHALL be
+citable in `aifa_finish` and `aifa_compare` of a later turn of the same Case without a new move on
+that document.
+
+#### Scenario: Follow-up question in the same chat
+
+- **WHEN** a first turn extracted net profit from document A, and a second turn of the same chat
+  lists the documents
+- **THEN** A's entry states that the Case holds its facts
+- **AND** a fact id from the first turn is accepted as evidence by the second turn's `aifa_finish`
+
+### Requirement: Each loop works with its own document's profile
+
+A move SHALL plan and validate with the profile and registry of the loop it was made in, whatever
+document another loop of the turn moved last. The Case head's single saved profile SHALL NOT
+replace a loop's own profile.
+
+#### Scenario: Alternating moves on an IFRS and an RSBU report
+
+- **WHEN** the loop on A (IFRS bank) moves, then the loop on B (RSBU company) moves, then A moves
+  again
+- **THEN** A's second move validates metric codes against A's registry, and B's move against B's
+
+### Requirement: The finish names the documents it used
+
+The `ПРИНЯТО` answer of `aifa_finish` SHALL name the file name of every document whose loop was
+opened in the turn, so that the root can name them in its reply.
+
+#### Scenario: Names reach the root
+
+- **WHEN** a turn with loops on «Сбер_2023.pdf» and «Сбер_2024.pdf» is finished
+- **THEN** the `ПРИНЯТО` answer names both files
 
 ### Requirement: Changing calls of a turn run one at a time across its loops
 
@@ -282,7 +361,8 @@ artifacts intact. `aifa_finish` after a restart SHALL close all loops listed for
 
 A turn whose set holds one document, or several with an active one, SHALL work with the same calls,
 arguments and loop answers as before this change; `doc_id` SHALL never be required in it. Only
-the `aifa_doc` listing gains fields, and the finish adds the `turn_documents` event.
+the `aifa_doc` listing gains fields, and the finish adds the `turn_documents` event and the
+document names in its `ПРИНЯТО` answer.
 
 #### Scenario: Unchanged single-document path
 

@@ -124,10 +124,16 @@ bulk write and refuses on mismatch ("нужна пересборка").
   three cases: a document indexed into an old index during a rebuild, a lost volume, and a
   stale `indexed` state.
 
-### S5. Search is keyed by allowed document ids; the workspace is an optional filter
+### S5. Search is a two-stage pipeline keyed by allowed document ids; the workspace is an optional filter
 
-- `select_documents(allowed_ids, query, workspace_id=None)` and
-  `retrieve_chunks(allowed_ids, query, k, workspace_id=None)`.
+- `select_documents(allowed_ids, query, mode="hybrid", workspace_id=None)` and
+  `retrieve_chunks(doc_ids, query, k, mode="hybrid")`.
+- One `aifa_search` call is a pipeline: without `doc_ids` it runs `select_documents` first and
+  passes the selected ids to `retrieve_chunks`; with `doc_ids` the first stage is skipped.
+  There is no plan-level way to retrieve chunks across all allowed documents at once.
+- `mode` is `hybrid` (the default: BM25 + kNN, fused by RRF k=60) or `lexical` (BM25 only, no
+  embedding call) and applies to both stages. In `lexical` the selection fuses card BM25 with
+  the owners of the top BM25 chunk hits.
 - A `conversation` turn can hold documents of several folders (owner access,
   `aifa-workspaces`), so `aifa_search` passes no workspace.
 - `aifa-multi-document-turn` passes the turn's workspace for `all_workspace` selection.
@@ -138,11 +144,15 @@ bulk write and refuses on mismatch ("нужна пересборка").
 - `assistant/search_tool.py` follows `DocTool`:
   - out of queue;
   - available under the same "after aifa_open" check as `aifa_doc`;
-  - `doc_ids` ⊆ `record.doc_ids`, defaulting to all of them;
-  - hits rendered by `ouro_view.search_hits` within the result limit.
-- On outage it refuses with a new code `Refusal.SEARCH_DOWN = "поиск_недоступен"` and the text
-  "поиск недоступен; страницы читает aifa_doc". `СБОЙ_СЛУЖБЫ` belongs to the plugin and tells the
-  planner to retry, which is wrong here.
+  - `doc_ids` ⊆ `record.doc_ids`; when absent, the call runs the two-stage pipeline (S5);
+  - `mode` ∈ `hybrid` (default) | `lexical`;
+  - hits rendered by `ouro_view.search_hits` within the result limit; a degraded answer is
+    rendered with its mark (S8).
+- A failed embeddings provider refuses with `Refusal.SEARCH_DOWN = "поиск_недоступен"` and the
+  text "поиск недоступен; точное совпадение ищет mode=\"lexical\"". An unreachable OpenSearch
+  does not refuse at all: the tool answers through the degraded path (S8). The refusal remains
+  for the case where neither the index nor the document texts are reachable. `СБОЙ_СЛУЖБЫ`
+  belongs to the plugin and tells the planner to retry, which is wrong here.
 - The new code needs the ADR (closed list).
 - F4: the margin of ADR-0022 p. 5 (1,000) is kept, because a schema that does not fit is dropped
   silently.
@@ -168,6 +178,34 @@ bulk write and refuses on mismatch ("нужна пересборка").
 | `SqlDocumentStore.__init__` start-up DDL | `ADD COLUMN IF NOT EXISTS index_state` | test: existing table without the column → the store starts and the column exists |
 | `composition.tool_api()` cached registry | adds `SearchTool` | `tools.snapshot.json` test |
 | Index creation | a deploy step (`reindex --init`) | the runbook in `aifa/deploy/dev/README.md` |
+| Degraded substring search (S8) | none: it reads the published texts through the same store `aifa_doc` uses; no new settings | test: search down → the answer comes from the texts and is marked degraded |
+
+### S8. Degraded search without OpenSearch
+
+- When the OpenSearch call fails, the tool falls back to a substring search (case-insensitive)
+  over the pages of the published document texts of the allowed documents — the same source
+  `aifa_doc query` reads. No embedding call happens in this path, so `mode` is irrelevant there.
+- The fallback selects documents by matching the query against card fields held in Postgres
+  (title, company, type, period), then returns matching passages with page numbers from the
+  selected documents, bounded by the same answer size (S9).
+- The answer is marked degraded in the payload and in the `ouro_view` rendering, so the planner
+  can say the search is limited and offer to repeat it later; the mark is part of the contract
+  snapshots.
+- The degraded path rechecks access exactly as the normal one (S4): texts outside the allowed
+  set are never read.
+- **Alternative: refuse with `поиск_недоступен` and point at `aifa_doc`.** Rejected by the
+  user: the tool should still answer, at degraded quality.
+
+### S9. Answer size adapts to the query when no `limit` is given
+
+- A deterministic classifier in `search/search.py` sizes the answer: a query carrying figures
+  or metric terms (numbers, %, units of measure, indicator words like «выручка», «прибыль»,
+  «рентабельность», «капитал», «дивиденды») is *specific* and gets 3 chunks; any other query is
+  *broad* and gets 8. The bounds (3/8) are starting values, calibrated on the benchmark of
+  task 6.3.
+- The classifier calls no model and is a pure function of the query string, so it is covered by
+  unit tests.
+- An explicit `limit` (1–10) always overrides the heuristic.
 
 ## Risks / Trade-offs
 
@@ -182,6 +220,10 @@ bulk write and refuses on mismatch ("нужна пересборка").
   apply to text, and add tests on real `===PAGE N===` fixtures from our corpus.
 - **[Card quality]** The meta card can be empty. → Chunk-owner aggregation in selection keeps a
   weak card from hiding a document.
+- **[A degraded answer taken for a full one]** → The degraded mark is in the payload and the
+  rendering (S8), and the planning skill text says how to read it.
+- **[The size heuristic misclassifies]** A broad query worded like a metrics one gets the small
+  answer. → `limit` stays an explicit override (S9); the bounds are calibrated on the benchmark.
 
 ## Migration Plan
 

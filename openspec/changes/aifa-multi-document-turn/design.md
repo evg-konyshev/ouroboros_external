@@ -56,6 +56,33 @@ service (`aifa/finengine/src/finengine/`):
 - **The queue is part of the contract.** CONTRACTS §3.1 lists `aifa_open` as out of queue, and
   ADR-0092 says "очередь `aifa_move` по одному на `LoopSession`" (ADR-0043 p. 4).
 - **RFA's universe for `all_workspace` is READY documents only** (RFA §7).
+- **Ouroboros side of the turn** (observed; the core is not changed):
+  - A subtask inherits its parent's `transport` (`ouroboros/tools/service/orchestration.py:135-167`).
+    The plugin takes `run_id` from `transport.source_message_id` (`skills/aifa-engine/plugin.py:308`),
+    so every subtask of a turn reaches the same `TurnRecord` and loops. The plugin also sends
+    `task_id` and `root_task_id`, so the service can tell a subtask from the root.
+  - A parent holds at most 10 outstanding subtasks (`orchestration.py:33`).
+  - The plan-author subtask reads `aifa_state` and `aifa_atoms` itself (ADR-0084). Its plan is
+    stored by the core tool `task_plan` (ADR-0061), whose steps are free text from the service's
+    point of view.
+  - The next turn's prompt holds only the chat's message tail (`openspec/specs/dialogue-context-assembly`),
+    not the tool results of earlier turns. What the next turn knows about this one is the root's
+    reply text and what the service keeps.
+  - `OUROBOROS_HARD_TIMEOUT_SEC` (1800 s) bounds each ouroboros task (`supervisor/queue.py:84-108`),
+    while a loop's wall limit is `ouroboros_loop_max_wall_sec` = 1200 s from its own open
+    (`config.py:79`, `goal_tools.py:157`). A loop opened 700 s into the turn would outlive the root
+    task, which is then killed with `hard_timeout` and gives no answer.
+- **The Case persists across turns of a chat.**
+  - `register_document` keys by `logical_name = document_id` (`skills/production_runtime.py:168`).
+  - A document stays active until a new version of the same document replaces it, so the facts of
+    earlier turns remain citable.
+- **The Case head holds one profile.**
+  - `run_passport` and `run_passport_document_version` live in the Case head (`contracts/case.py:105`).
+  - A plan built without an explicit passport takes the head's one when the versions match
+    (`skills/case_runtime.py:426-431, 461-465, 526-531`).
+  - A run that discovers a passport writes it to the head (`case_runtime.py:705-712`).
+  - The dynamic run passes its own passport (`skills/spec/dynamic_run.py:1029`). Whether every
+    goal channel does the same with two loops is not verified; task 4.4 checks it.
 - **Governance.**
   - The ouroboros core is frozen (F1).
   - The tool set, the refusal list and the ouroboros env change only by ADR.
@@ -85,6 +112,10 @@ service (`aifa/finengine/src/finengine/`):
   (user decision). This deliberately departs from RFA's READY-only universe, and ADR A records it:
   the planner sees that a folder document exists but cannot be read, and can tell the user.
 - **No cross-loop use of the `set.assemble`/`calc.series` atoms.**
+- **No ouroboros core change.** Subtask wiring, `task_plan`, prompt assembly and the hard timeout
+  stay as they are. The integration uses what ouroboros already gives: inherited `transport`,
+  `task_id`/`root_task_id` in the tool context, the message tail, and free-text plan steps
+  (D11–D14).
 
 ## Decisions
 
@@ -144,7 +175,7 @@ keys, gates.
 - Six is a constant in `loop_desk.py`. A breach is refused with the new code `лимит_циклов`.
 - A refusal for a missing `doc_id` is returned before any loop is selected, so it calls no
   `session.reject`: it spends no move and counts in no streak.
-- `aifa_wait(task_id)` takes `max(opened_at + max_wall_seconds)` over the open loops.
+- `aifa_wait(task_id)` takes the turn's deadline (D11).
 
 ### D5. Finish runs on the first loop, closes the rest, and announces the documents
 
@@ -231,7 +262,80 @@ keys, gates.
 - **Alternative: port `presets.py` whole.** It is bound to RFA's `facts` rows. Only its rules are
   ported, with RFA's tests where they apply.
 
-### D10. Startup side-effects touched (rule R2.1)
+### D11. One deadline per turn, set by the first loop
+
+- The first report loop's `opened_at + max_wall_seconds` is written into `LOOP_INDEX` as the turn's
+  deadline.
+- Every later loop takes it as its own end: its `limits.max_wall_seconds` is shortened to
+  `deadline − opened_at`. `ЛИМИТ` then comes from the existing limit check, with no new code path.
+- The service never sees `OUROBOROS_HARD_TIMEOUT_SEC`. With one deadline, the turn ends with
+  `ЛИМИТ` and an answer while the root task is alive: 1200 s from the first open is less than
+  1800 s for the root.
+- The restore keeps the shortened limit, because it is part of the saved loop state.
+- **Alternative: the latest deadline over the loops** (the first draft of D4). A loop opened at
+  700 s ends at 1900 s, after ouroboros has killed the root.
+- **Alternative: a service setting mirroring the ouroboros timeout.** It duplicates an ouroboros
+  setting across the boundary (F9) and drifts.
+
+### D12. `aifa_state()` among several loops is a turn overview
+
+- The plan-author subtask reads state itself (ADR-0084). With several loops, a refusal would make
+  it guess documents, so the no-argument call answers with an overview (`ouro_view.turn_overview`):
+  - per loop: `doc_id`, file name, company, period, `profile_id`, moves used and left;
+  - documents of the set without a loop;
+  - the deadline.
+- Then `aifa_state(doc_id=…)` gives one loop's registry and artifacts, as today.
+- It reads `LOOP_INDEX`, loop states and registry metadata only, so it stays out of queue like
+  `aifa_state`.
+- It is not a new tool, so the F4 schema budget does not change.
+- The plan-author's plan names a `doc_id` for each move step in its text. `task_plan` is not
+  changed: its steps are free text, and a field there would be an ouroboros core change (F1).
+
+### D13. Subtasks address loops by `doc_id`, like the root
+
+- A subtask reaches the turn through the inherited `transport` (Context), with no new wiring.
+- The service treats it as today: `aifa_open`/`aifa_move`/`aifa_finish` are root-only
+  (`не_та_роль`, ADR-0060 p. 5). With several loops, `aifa_register_atom`/`aifa_report`/
+  `aifa_atoms` need `doc_id`, with the same refusal listing documents.
+- The root puts the `doc_id` into the subtask's task text (skill text 5.1). `aifa-atom-author` and
+  `aifa-plan-author` copy it into their calls.
+- **Alternative: pin a subtask to the first document it names** (`task_id → doc_id` in
+  `LOOP_INDEX`). It saves one argument, but adds state written out of queue by `aifa_report`, and is
+  lost on restore. Rejected; revisit if live traces show subtasks dropping `doc_id`.
+
+### D14. Follow-up turns reuse the Case, not the dialogue
+
+- The next turn's prompt does not hold this turn's tool results (Context). What carries over:
+  - the Case: facts of earlier turns stay active and citable (Context);
+  - the root's reply: `ПРИНЯТО` names the files used (spec), and the skill text says to name them
+    in the reply, so the message tail holds them;
+  - the listing: each entry states how many metric facts of the document's active version the Case
+    holds. It is counted from the Case artifact index by `document_version`, in one query per
+    listing page, without texts.
+- The skill text says: on a follow-up, read the listing first. Cite facts already in the Case
+  through `aifa_compare` and `aifa_finish`. Open a loop only for a document that is missing facts.
+  This also cuts the sequential-move time (D3 risk).
+- `aifa_compare` needs no open loop. `aifa_finish` still needs one, so a pure follow-up comparison
+  opens one loop: the cheapest is the document the question names.
+- **Alternative: inject the previous turn's tool results into the prompt.** It is an ouroboros core
+  change (prompt assembly, F1) and duplicates the Case.
+
+### D15. A loop plans with its own profile
+
+- Two loops in one Case share one head `run_passport` (Context). A path that plans without an
+  explicit passport takes the head's one only when the document versions match, so another loop's
+  profile cannot be picked up. The head write at `case_runtime.py:705-712` still flips between
+  documents.
+- Rule: every call from a loop passes the loop's frozen passport explicitly. The head passport is
+  only a fallback for the single-loop path.
+- Task 4.4 proves it with alternating moves on an IFRS bank and an RSBU company. If some path
+  passes `None`, the fix is to pass the loop's passport at that call site, not to make the head
+  per-document.
+
+### D16. Startup side-effects touched (rule R2.1)
+
+D11–D15 add no start-up side-effect: the overview is a view of existing state, and the deadline
+lives in `LOOP_INDEX`.
 
 | Side-effect at start | Change | Preserved by |
 |---|---|---|
@@ -247,13 +351,18 @@ keys, gates.
 
 - **[Planner picks the wrong documents]** → Ranked selection includes chunk owners. The listing
   shows the file name, and the user can narrow with `doc_ids`.
-- **[Six loops cost six budgets]** → `OUROBOROS_HARD_TIMEOUT_SEC` caps the turn, and the skill text
-  says to open only what the question needs.
-- **[Sequential moves across documents can hit the hard timeout]** Five documents need at least
-  five moves in a row (D3). → Mitigations:
+- **[Six loops cost six budgets]** → All loops share one deadline (D11), so six loops cost one wall
+  budget. The skill text says to open only what the question needs.
+- **[Sequential moves across documents run out of time]** Five documents need at least five moves
+  in a row (D3). Past the shared deadline the turn gets `ЛИМИТ` and answers with what it has, not a
+  `hard_timeout` without an answer (D11). → Mitigations:
   - the skill text: one move per document, up to three goals in it (ADR-0089), and presets over
-    facts already in the Case instead of re-extracting;
-  - the live check measures a five-document turn against 1800 s;
+    facts already in the Case instead of re-extracting (D14);
+  - the live check measures a five-document turn against the 1200 s deadline;
+- **[Subtask drops `doc_id`]** → It gets a refusal that lists the documents and spends nothing
+  (D13). Pinning is the recorded revisit.
+- **[Case head profile flips between loops]** → Every loop passes its own passport (D15), and the
+  alternating-moves test in 4.4 guards it.
   - if it is too slow, the recorded revisit is parallel loops (D3).
 - **[Schema budget]** The new arguments and tool must stay under 9,000. → `test_schema_budget.py`
   fails before ouroboros would silently drop a tool.

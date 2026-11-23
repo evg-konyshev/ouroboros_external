@@ -35,6 +35,20 @@ and Case and runs the code. It is the last of three changes. It builds on `aifa-
     `aifa_state`, `aifa_atoms`, `aifa_register_atom`, `aifa_report`.
   - All loops write to the turn's Case (`case_id = project_id or session_id`, so a folder's chats
     share one), which already supports several active documents.
+- **Fitting the ouroboros turn** (no core change):
+  - One deadline per turn: every loop ends when the first one does. The turn then answers with
+    `ЛИМИТ` before ouroboros kills the root task at `OUROBOROS_HARD_TIMEOUT_SEC`.
+  - `aifa_state()` among several loops answers with a turn overview: loops, profiles, moves left,
+    unopened documents and the deadline. The plan-author subtask, which reads state itself, can
+    then plan per document instead of being refused.
+  - Subtasks reach the turn's loops through the inherited `transport`. They name `doc_id` like the
+    root, and the root writes it into their task text.
+  - Follow-up turns: ouroboros carries only the message tail between turns, so the service carries
+    the rest.
+    - The listing shows which documents already have facts in the chat's Case.
+    - `aifa_compare`/`aifa_finish` accept facts from earlier turns.
+    - `ПРИНЯТО` names the files used, so the reply and the next turn's tail hold them.
+  - Each loop plans with its own document's profile, never the Case head's shared one.
 - **Turn-level finish.**
   - `aifa_finish` closes every loop and accepts evidence from any of them.
   - It publishes one result.
@@ -64,9 +78,12 @@ and Case and runs the code. It is the last of three changes. It builds on `aifa-
 
 ### New Capabilities
 
-- `aifa-turn-documents`: which documents an AIFA turn may use, and how. Covers scope
-  (`conversation`/`all_workspace`), the frozen set, owner checks, the listing and ranked
-  selection, loops opened per document, and one turn-level finish.
+- `aifa-turn-documents`: which documents an AIFA turn may use, and how. Covers:
+  - scope (`conversation`/`all_workspace`), the frozen set and owner checks;
+  - the listing with Case facts of earlier turns, and ranked selection;
+  - loops opened per document, with one turn deadline, the turn overview, subtask addressing and
+    per-loop profiles;
+  - one turn-level finish.
 - `aifa-cross-document-presets`: deterministic cross-document tables over Case facts
   (retrospective, peer comparison, cross-source verification) and their comparability and
   materiality rules.

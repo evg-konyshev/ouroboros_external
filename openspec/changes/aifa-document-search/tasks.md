@@ -24,7 +24,12 @@ a second branch would need its own ADR. If the session budget runs out, the rest
 ## 1. Decision record and infrastructure
 
 - [ ] 1.1 Write the ADR (next free number, status «предложено»). It records:
-      - S1–S6 and the non-goals;
+      - S1–S6, S8, S9 and the non-goals;
+      - the always two-stage pipeline (selection first, chunks inside the selected documents),
+        the `mode` parameter with the `hybrid` default, and the adaptive answer size;
+      - the degraded substring search and its mark, replacing the refusal on an OpenSearch
+        outage; `поиск_недоступен` narrowed to the embeddings provider (naming `mode="lexical"`)
+        and to the loss of both the index and the texts;
       - the `opensearch` service and the dependency `opensearch-py`;
       - the tool `aifa_search` and the refusal code `поиск_недоступен`;
       - `OUROBOROS_INITIAL_EXTENSION_SCHEMA_BUDGET=10000` and the F4 target of 9,000, with the
@@ -36,8 +41,8 @@ a second branch would need its own ADR. If the session budget runs out, the rest
 
       In the same branch, update:
       - `ARCHITECTURE.md` §4.2/§4.3;
-      - `CONTRACTS.md` §3: the `aifa_search` row, `поиск_недоступен` in §3.0, and the next free
-        C3 number for its check.
+      - `CONTRACTS.md` §3: the `aifa_search` row (with `mode` and the degraded answer),
+        `поиск_недоступен` in §3.0, and the next free C3 number for its check.
 
       Verify: F13 green. Gate: owner «принято».
 - [ ] 1.2 Ask the user to confirm `opensearch-py`, then
@@ -141,14 +146,21 @@ a second branch would need its own ADR. If the session budget runs out, the rest
 
 ## 4. Search
 
-- [ ] 4.1 `search/search.py` with `select_documents(allowed_ids, query, workspace_id=None)` and
-      `retrieve_chunks(allowed_ids, query, k, workspace_id=None)`: RRF k=60, RFA `pool_size`, and
-      a registry recheck through `_user_can_see` (S4, S5). Tests, with OpenSearch:
+- [ ] 4.1 `search/search.py` with `select_documents(allowed_ids, query, mode="hybrid",
+      workspace_id=None)` and `retrieve_chunks(doc_ids, query, k, mode="hybrid")`: RRF k=60, RFA
+      `pool_size`, and a registry recheck through `_user_can_see` (S4, S5). One call runs the
+      pipeline: select first, then retrieve inside the selected documents; `lexical` drops the
+      kNN legs. On an unreachable OpenSearch, the degraded path (S8) answers with a marked
+      substring search over the published texts, rechecking access the same way. Tests, with
+      OpenSearch:
       - a sparse card whose chunks match best is selected;
       - a hit outside `allowed_ids` is never returned;
       - an orphan chunk is never returned;
       - documents of two workspaces are both selectable with no filter, and only one with a
         filter;
+      - `mode="lexical"` makes no embedding call and still fuses card BM25 with chunk owners;
+      - with the search container stopped: the answer comes from the texts, is marked degraded,
+        and never reads texts outside the allowed set;
       - live test (skipped without a key): «проблемы с ликвидностью» finds the «риск
         ликвидности» chunk.
 
@@ -158,6 +170,12 @@ a second branch would need its own ADR. If the session budget runs out, the rest
       - skip its per-document top-up of crowded-out documents ("добор внутри вытесненных"): that
         retrieval policy is not in this plan. Revisit if answers over many documents keep missing
         one source.
+- [ ] 4.2 The answer-size heuristic (S9): a pure classifier of the query string, with the 3/8
+      bounds as starting values. Tests:
+      - «что пишут о рисках» → the broad size;
+      - «чистая прибыль 2024» and «рентабельность капитала, %» → the specific size;
+      - an explicit `limit` overrides the classifier;
+      - no model call happens (assert on the provider fake).
 
 ## 5. Tool
 
@@ -176,13 +194,22 @@ a second branch would need its own ADR. If the session budget runs out, the rest
       - a foreign `doc_id` → `ОТКАЗ нет_документа`;
       - before `aifa_open` → the same refusal as `aifa_doc`;
       - `limit` outside 1–10 → `неверные_аргументы`;
-      - search down → `ОТКАЗ поиск_недоступен` naming `aifa_doc`, with no "повтори";
+      - without `doc_ids` the tool selects documents first and returns chunks only from the
+        selected ones;
+      - the default is `hybrid`; `mode="lexical"` reaches the service and skips kNN;
+      - search down → a degraded answer from the texts with the degraded mark, not a refusal;
+      - embeddings provider down → `ОТКАЗ поиск_недоступен` naming `mode="lexical"`, with no
+        "повтори";
+      - index and texts both unreachable → `ОТКАЗ поиск_недоступен`;
       - it answers while a move holds the queue.
 
       Verify: `test_dev_config.py` and `test_schema_budget.py` are green, and the measured
       `budget_chars` is recorded in the ADR.
 - [ ] 5.2 In `skills/aifa-planning/SKILL.md`, say when to use `aifa_search` (qualitative and
-      cross-document passages) and when to use `aifa_doc` (exact pages). Run
+      cross-document passages) and when to use `aifa_doc` (exact pages); add that the search is
+      always two-stage, when to pass `mode="lexical"` (exact terms and figures, or after the
+      refusal naming it), that a broad query gets more chunks and a metrics query fewer unless
+      `limit` is set, and how to read the degraded mark. Run
       `scripts/resolve_rules.py` on the file first. Verify: new assertions in
       `skills/aifa-engine/tests/test_planning_text.py` fail before and pass after.
 
