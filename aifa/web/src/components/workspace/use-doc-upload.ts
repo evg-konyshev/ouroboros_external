@@ -345,6 +345,7 @@ export function useDocUpload(project: Project | null): DocUpload {
               // отправит документ агенту. Иначе облачный OCR тратится на файл,
               // о котором ещё не сказали, что с ним делать.
               defer_parse: true,
+              workspace_id: p.folder_id,
               onProgress: (percent) => patchItem(s.id, { percent }),
             });
             // Имя кладём в общий реестр СРАЗУ: список документов приедет с

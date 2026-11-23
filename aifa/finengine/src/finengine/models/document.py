@@ -40,6 +40,8 @@ class DocumentMeta(BaseModel):
     ocr_engine: str = ""
     # Owner (auth user id). 0 = legacy/unowned (only the bootstrap admin can see).
     owner_id: int = 0
+    # Workspace: папка или owner:<id> по умолчанию. Пусто в JSON = default.
+    workspace_id: str = ""
     # Метакарта (#189): что за документ, о ком, за какой период и сколько его.
     # Снимается ОДИН раз при приёме, ПОСЛЕ приведения к тексту, и хранится с
     # документом: классификация — свойство документа, а не действие анализа

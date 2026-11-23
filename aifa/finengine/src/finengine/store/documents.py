@@ -38,12 +38,13 @@ import logging
 from typing import Any
 
 from sqlalchemy import (
-    JSON, Column, Integer, MetaData, String, Table, delete, select,
+    JSON, Column, Integer, MetaData, String, Table, delete, func, inspect, select, text,
 )
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from finengine.models.document import Chunk, DocumentMeta, ExtractedItem
 from finengine.store.engine import движок
+from finengine.store.workspaces import WorkspaceStore
 
 log = logging.getLogger(__name__)
 
@@ -52,10 +53,8 @@ _metadata = MetaData()
 DOCUMENT = Table(
     "document", _metadata,
     Column("doc_id", String(64), primary_key=True),
-    # Владелец — КОЛОНКА и индекс: по нему фильтруются списки и проверяется
-    # доступ. Внутри `meta` он тоже есть, но условие запроса должно опираться
-    # на колонку, а не на разбор JSON.
     Column("owner_id", Integer, nullable=False, default=0, index=True),
+    Column("workspace_id", String(64), nullable=True, index=True),
     Column("meta", JSON, nullable=False),
 )
 
@@ -67,11 +66,14 @@ DOCUMENT_CHUNK = Table(
 )
 
 
-def _to_meta(значение: Any) -> DocumentMeta:
+def _to_meta(значение: Any, workspace_id: str | None = None) -> DocumentMeta:
     """JSON из базы → модель. SQLite отдаёт строку, Postgres — уже словарь."""
     if isinstance(значение, str):
         значение = json.loads(значение)
-    return DocumentMeta(**значение)
+    meta = DocumentMeta(**значение)
+    if workspace_id is not None:
+        meta.workspace_id = workspace_id
+    return meta
 
 
 class SqlDocumentStore:
@@ -89,6 +91,58 @@ class SqlDocumentStore:
         self._engine = движок(url, pool_pre_ping=True, future=True, echo=False)
         # Alembic в репозитории нет — таблицы заводятся при первом обращении.
         _metadata.create_all(self._engine)
+        # workspace_id добавлен позже: legacy-таблицы без колонки — обновить.
+        self._ensure_workspace_column()
+        # workspace создаётся той же базой; используем уже собранный движок.
+        self._workspaces = WorkspaceStore(self._engine)
+
+    def _ensure_workspace_column(self) -> None:
+        with self._engine.begin() as conn:
+            if conn.dialect.name == "postgresql":
+                conn.execute(
+                    text("ALTER TABLE document ADD COLUMN IF NOT EXISTS workspace_id VARCHAR(64)")
+                )
+                conn.execute(
+                    text("CREATE INDEX IF NOT EXISTS ix_document_workspace_id ON document(workspace_id)")
+                )
+            else:
+                inspector = inspect(conn)
+                columns = {column["name"] for column in inspector.get_columns("document")}
+                if "workspace_id" not in columns:
+                    conn.execute(text("ALTER TABLE document ADD COLUMN workspace_id VARCHAR(64)"))
+                indexes = {index["name"] for index in inspector.get_indexes("document")}
+                if "ix_document_workspace_id" not in indexes:
+                    conn.execute(text("CREATE INDEX ix_document_workspace_id ON document(workspace_id)"))
+
+    def _default_workspace(self, owner_id: int) -> str:
+        ws_id = f"owner:{owner_id}"
+        self._workspaces.upsert_workspace(owner_id=owner_id, workspace_id=ws_id, name="")
+        return ws_id
+
+    def _existing_document(self, doc_id: str) -> tuple[int, str | None] | None:
+        with self._engine.begin() as conn:
+            row = conn.execute(
+                select(DOCUMENT.c.owner_id, DOCUMENT.c.workspace_id)
+                .where(DOCUMENT.c.doc_id == doc_id)
+            ).first()
+            return (row[0], row[1]) if row else None
+
+    def _resolve_workspace_id(self, meta: DocumentMeta) -> str:
+        owner_id = int(meta.owner_id or 0)
+        existing = self._existing_document(meta.doc_id)
+        if existing is not None and existing[0] != owner_id:
+            raise ValueError("владелец документа не может быть изменён")
+        if meta.workspace_id:
+            self._workspaces.upsert_workspace(
+                owner_id=owner_id, workspace_id=meta.workspace_id, name="")
+            return meta.workspace_id
+        if existing is not None and existing[1]:
+            return existing[1]
+        return self._default_workspace(owner_id)
+
+    @property
+    def workspace_store(self) -> WorkspaceStore:
+        return self._workspaces
 
     def _upsert(self, conn, таблица, ключ: str, значения: dict) -> None:
         """Вставить или обновить. Диалект решает, каким способом.
@@ -114,11 +168,50 @@ class SqlDocumentStore:
 
     def add_document(self, meta: DocumentMeta, chunks: list[Chunk]) -> None:
         """Зарегистрировать документ. Пустой список кусков — законный вызов."""
+        owner_id = int(meta.owner_id or 0)
+        workspace_id = self._resolve_workspace_id(meta)
+        meta_dict = json.loads(meta.model_dump_json())
         with self._engine.begin() as conn:
-            self._upsert(conn, DOCUMENT, meta.doc_id, {
-                "doc_id": meta.doc_id, "owner_id": int(meta.owner_id or 0),
-                "meta": json.loads(meta.model_dump_json()),
-            })
+            if conn.dialect.name == "postgresql":
+                statement = pg_insert(DOCUMENT).values(
+                    doc_id=meta.doc_id,
+                    owner_id=owner_id,
+                    workspace_id=workspace_id,
+                    meta=meta_dict,
+                )
+                result = conn.execute(
+                    statement.on_conflict_do_update(
+                        index_elements=[DOCUMENT.c.doc_id],
+                        set_={
+                            "owner_id": owner_id,
+                            "workspace_id": func.coalesce(
+                                func.nullif(statement.excluded.workspace_id, ""),
+                                DOCUMENT.c.workspace_id,
+                            ),
+                            "meta": meta_dict,
+                        },
+                        where=DOCUMENT.c.owner_id == owner_id,
+                    ).returning(DOCUMENT.c.doc_id)
+                ).scalar_one_or_none()
+                if result is None:
+                    raise ValueError("владелец документа не может быть изменён")
+            else:
+                # SQLite fallback: сохраняем существующий workspace, если новый пуст.
+                стлб = DOCUMENT.c.doc_id
+                есть = conn.execute(
+                    select(DOCUMENT.c.owner_id, DOCUMENT.c.workspace_id)
+                    .where(стлб == meta.doc_id)
+                ).first()
+                if есть and есть[0] != owner_id:
+                    raise ValueError("владелец документа не может быть изменён")
+                if есть and not workspace_id:
+                    workspace_id = есть[1] or workspace_id
+                self._upsert(conn, DOCUMENT, meta.doc_id, {
+                    "doc_id": meta.doc_id,
+                    "owner_id": owner_id,
+                    "workspace_id": workspace_id,
+                    "meta": meta_dict,
+                })
             for c in chunks or ():
                 self._upsert(conn, DOCUMENT_CHUNK, c.chunk_id, {
                     "chunk_id": c.chunk_id, "doc_id": c.doc_id,
@@ -151,20 +244,28 @@ class SqlDocumentStore:
                 ))
         return итог
 
-    def list_documents(self, owner_id: int | None = None) -> list[DocumentMeta]:
+    def list_documents(
+        self,
+        owner_id: int | None = None,
+        workspace_id: str | None = None,
+    ) -> list[DocumentMeta]:
         """Реестр документов. `owner_id=None` — все (миграция/уборка/админ);
         иначе — только документы этого владельца, через колонку-индекс."""
-        запрос = select(DOCUMENT.c.meta)
+        запрос = select(DOCUMENT.c.meta, DOCUMENT.c.workspace_id)
         if owner_id is not None:
             запрос = запрос.where(DOCUMENT.c.owner_id == owner_id)
+        if workspace_id is not None:
+            запрос = запрос.where(DOCUMENT.c.workspace_id == workspace_id)
         with self._engine.begin() as conn:
-            return [_to_meta(m) for (m,) in conn.execute(запрос)]
+            return [_to_meta(m, ws) for (m, ws) in conn.execute(запрос)]
 
     def get_document(self, doc_id: str) -> DocumentMeta | None:
         with self._engine.begin() as conn:
             строка = conn.execute(
-                select(DOCUMENT.c.meta).where(DOCUMENT.c.doc_id == doc_id)).first()
-        return _to_meta(строка[0]) if строка else None
+                select(DOCUMENT.c.meta, DOCUMENT.c.workspace_id)
+                .where(DOCUMENT.c.doc_id == doc_id)
+            ).first()
+        return _to_meta(строка[0], строка[1]) if строка else None
 
     def update_document_meta(self, meta: DocumentMeta) -> None:
         """Заменить метаданные. Незарегистрированный doc_id — ничего не делаем.
@@ -181,11 +282,14 @@ class SqlDocumentStore:
         """
         with self._engine.begin() as conn:
             есть = conn.execute(
-                select(DOCUMENT.c.doc_id).where(DOCUMENT.c.doc_id == meta.doc_id)).first()
+                select(DOCUMENT.c.owner_id).where(DOCUMENT.c.doc_id == meta.doc_id)).first()
             if not есть:
                 return
+            owner_id = int(meta.owner_id or 0)
+            if есть[0] != owner_id:
+                raise ValueError("владелец документа не может быть изменён")
             conn.execute(DOCUMENT.update().where(DOCUMENT.c.doc_id == meta.doc_id).values(
-                owner_id=int(meta.owner_id or 0),
+                owner_id=owner_id,
                 meta=json.loads(meta.model_dump_json())))
 
     @property

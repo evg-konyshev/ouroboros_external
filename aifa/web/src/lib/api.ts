@@ -843,6 +843,8 @@ export async function uploadDocument(
     defer_parse?: boolean;
     /** Прогресс выгрузки в процентах (только с XHR-веткой). */
     onProgress?: (percent: number) => void;
+    /** Workspace (project folder) the upload belongs to. */
+    workspace_id?: string;
   } = {},
   signal?: AbortSignal,
 ): Promise<UploadResponse> {
@@ -853,6 +855,7 @@ export async function uploadDocument(
   fd.append("doc_type", meta.doc_type ?? "");
   fd.append("company_type", meta.company_type ?? "unknown");
   fd.append("ocr_engine", meta.ocr_engine ?? "pymupdf");
+  if (meta.workspace_id) fd.append("workspace_id", meta.workspace_id);
   if (meta.defer_parse) fd.append("defer_parse", "1");
 
   // Прогресс отдаёт только XHR: у fetch нет событий выгрузки тела, а показать

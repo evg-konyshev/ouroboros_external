@@ -192,7 +192,7 @@ C4Component
     Component(subtasks, "subtask_waits", "новый", "подзадачи хода: ожидание по кадру итога или aifa_report done")
     Component(pipeline, "конвейер", "есть", "intent, GraphPlanner, GraphExecutor, атомы, сценарии, Case")
     Component(room, "sealed_room", "есть, + заголовки", "разовая комната Workstation")
-    Component(files, "doc_store", "переделка", "doc_id и file_id, распознавание, отказ XLS/DOC")
+    Component(files, "doc_store", "переделка + workspace_id", "doc_id и file_id, распознавание, отказ XLS/DOC, workspace документа")
     Component(llm, "llm", "есть", "модели извлечения")
   }
   ContainerDb(db, "База службы", "PostgreSQL")

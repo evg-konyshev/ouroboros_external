@@ -15,7 +15,7 @@ PostgreSQL 16 container pattern. One step branch (`sym/NN-workspaces`).
 
 ## 1. Decision record
 
-- [ ] 1.1 Write the ADR (next free number, status «предложено»). It records W1–W4, the non-goals,
+- [x] 1.1 Write the ADR (next free number, status «предложено»). It records W1–W4, the non-goals,
       and the role of this change as a prerequisite for the multi-document turn. In the same
       branch, update:
       - `ARCHITECTURE.md` §4.3 (service storage);
@@ -27,7 +27,7 @@ PostgreSQL 16 container pattern. One step branch (`sym/NN-workspaces`).
 
 ## 2. Storage
 
-- [ ] 2.1 New `store/workspaces.py` with the `workspace` table (`create_all` on first access) and
+- [x] 2.1 New `store/workspaces.py` with the `workspace` table (`create_all` on first access) and
       `upsert_workspace`/`get_workspace`, applying the id rule from W1. New test
       `tests/test_workspaces_store.py`:
       - `upsert("owner:7")` is idempotent;
@@ -42,7 +42,7 @@ PostgreSQL 16 container pattern. One step branch (`sym/NN-workspaces`).
         workspace never lists another owner's document";
       - skip the rest of `test_intake.py` (byte deduplication, chat linking on upload, the email
         path): not in this plan.
-- [ ] 2.2 `workspace_id` on `DocumentMeta` and on the `document` column, added in
+- [x] 2.2 `workspace_id` on `DocumentMeta` and on the `document` column, added in
       `SqlDocumentStore.__init__` (`ADD COLUMN IF NOT EXISTS` plus an index). `add_document`
       assigns the default, and `list_documents(workspace_id=…)` is added (W3). Tests on
       PostgreSQL:
@@ -56,7 +56,7 @@ PostgreSQL 16 container pattern. One step branch (`sym/NN-workspaces`).
       - `get_document` reports the column's workspace even if the `meta` JSON says otherwise.
 
       Fails before: the column does not exist.
-- [ ] 2.3 One-shot `store/migrate_workspaces.py`: dry run, then `--apply` (W4). New test
+- [x] 2.3 One-shot `store/migrate_workspaces.py`: dry run, then `--apply` (W4). New test
       `tests/test_migrate_workspaces.py`, with fixture dialog states:
       - a document in one folder → that folder;
       - in two folders → the oldest, with the conflict logged;
@@ -68,7 +68,7 @@ PostgreSQL 16 container pattern. One step branch (`sym/NN-workspaces`).
 
 ## 3. API
 
-- [ ] 3.1 Add `workspace_id` to `POST /documents/upload` (`api/main.py`). Tests in
+- [x] 3.1 Add `workspace_id` to `POST /documents/upload` (`api/main.py`). Tests in
       `tests/test_workspaces_api.py`:
       - no field → `owner:<id>`;
       - own folder → that folder;
@@ -78,7 +78,7 @@ PostgreSQL 16 container pattern. One step branch (`sym/NN-workspaces`).
 
       Producer/consumer: the real route → `SqlDocumentStore`. Allowed fake: `catalog()`, the
       ouroboros boundary.
-- [ ] 3.2 Call the workspace upsert from the `/dialogs` push after `_merge_dialog_states`, in
+- [x] 3.2 Call the workspace upsert from the `/dialogs` push after `_merge_dialog_states`, in
       `try` (W2). Tests:
       - a new folder → a workspace with its name;
       - a newer rename → the name changes, and an older one does not;
@@ -89,7 +89,7 @@ PostgreSQL 16 container pattern. One step branch (`sym/NN-workspaces`).
 
 ## 4. Frontend
 
-- [ ] 4.1 `use-doc-upload.ts`: an upload from a chat with `folder_id` sends
+- [x] 4.1 `use-doc-upload.ts`: an upload from a chat with `folder_id` sends
       `workspace_id=folder_id`; a chat outside folders sends nothing. Verify with vitest:
       - the form body carries the folder id in a folder chat;
       - there is no field outside folders.
@@ -98,13 +98,13 @@ PostgreSQL 16 container pattern. One step branch (`sym/NN-workspaces`).
 
 ## 5. Verification and handover
 
-- [ ] 5.1 Run `aifa/scripts/check.sh` and paste the result, comparing with the session-start
+- [x] 5.1 Run `aifa/scripts/check.sh` and paste the result, comparing with the session-start
       baseline.
-- [ ] 5.2 Get an independent `/code-review` of the diff in a clean context, citing file:line, per
+- [x] 5.2 Get an independent `/code-review` of the diff in a clean context, citing file:line, per
       `aifa-symbiosis/plan/REVIEW_GUIDE.md`. Verify: no open blockers in the review file.
 - [ ] 5.3 On aifa-sym, at the owner's signal, after the engine deploy: run the migration dry run,
       review the conflict report with the owner, then run `--apply`. Verify:
       - `SELECT count(*) FROM document WHERE workspace_id IS NULL` = 0;
       - a new upload in a folder chat gets the folder's workspace.
-- [ ] 5.4 Add `aifa-symbiosis/plan/PROGRESS.md` §1/§3/§4 entries and run `graphify update .`.
+- [x] 5.4 Add `aifa-symbiosis/plan/PROGRESS.md` §1/§3/§4 entries and run `graphify update .`.
       Verify: the entries exist, and the rebuild exits 0.

@@ -10,6 +10,7 @@ import secrets
 import threading
 import time
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import AsyncGenerator
 
@@ -27,6 +28,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
+log = logging.getLogger(__name__)
 
 from finengine.assistant.ouro_client import OuroUnavailable  # noqa: E402
 from finengine.assistant.ouro_files import FileRefused, catalog, legacy_office_refusal  # noqa: E402
@@ -627,6 +629,7 @@ async def upload_document(
     doc_type: str = Form(""),
     company_type: str = Form("unknown"),
     ocr_engine: str = Form("idp"),
+    workspace_id: str = Form(""),
     # Новый экран грузит файл СРАЗУ, а распознавать просит только когда
     # пользователь отправил документ в чат: до этого момента тратить облачный
     # OCR не на что (пользователь может передумать или добавить ещё файлы).
@@ -644,6 +647,16 @@ async def upload_document(
     refusal = legacy_office_refusal(file.filename or "")
     if refusal is not None:
         raise HTTPException(status_code=400, detail=refusal.text)
+
+    # ADR-0101: workspace_id принадлежит вызывающему или создаётся для него.
+    workspace_id = workspace_id.strip()
+    if workspace_id:
+        try:
+            get_store().workspace_store.upsert_workspace(
+                owner_id=user.id, workspace_id=workspace_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail="workspace not found") from exc
+
     try:
         parsed_doc_type = DocType(doc_type) if doc_type else DocType.OTHER
         parsed_company_type = CompanyType(company_type) if company_type else CompanyType.UNKNOWN
@@ -704,6 +717,7 @@ async def upload_document(
         company_type=parsed_company_type,
         period=period,
         owner_id=user.id,
+        workspace_id=workspace_id,
         sha256=stored.sha256,
         catalog_file_id=stored.file_id,
     )
@@ -2317,6 +2331,10 @@ def put_dialogs(
             )
         merged["saved_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         store.save(user.id, merged, changed_ids=report["touched"])
+        try:
+            _sync_workspaces_from_folders(user.id, merged.get("folders") or [])
+        except Exception:  # noqa: BLE001 — workspace write must not fail the push
+            log.exception("failed to sync workspaces for user %s", user.id)
     if report["missing"] or report["shrunk"]:
         build = req.headers.get("x-aifa-build", "") or "СТАРЫЙ БАНДЛ (без метки)"
         ua = req.headers.get("user-agent", "")[:120]
@@ -2332,6 +2350,27 @@ def put_dialogs(
         "projects_total": len(merged["projects"]),
         "restored_for_pusher": len(report["missing"]),
     }
+
+
+def _sync_workspaces_from_folders(user_id: int, folders: list[dict]) -> None:
+    """Создать/переименовать workspace для каждой валидной папки (ADR-0101, W2)."""
+    ws_store = get_store().workspace_store
+    for folder in folders:
+        if not isinstance(folder, dict):
+            continue
+        ws_id = folder.get("id")
+        if not isinstance(ws_id, str) or ws_id.startswith("owner:"):
+            continue
+        stamp = int(folder.get("updated_at") or folder.get("created_at") or 0)
+        try:
+            ws_store.upsert_workspace(
+                owner_id=user_id,
+                workspace_id=ws_id,
+                name=str(folder.get("name") or ""),
+                updated_at=datetime.fromtimestamp(stamp / 1000, tz=timezone.utc),
+            )
+        except ValueError:
+            log.warning("folder id %s collides with another owner or is invalid; skipped", ws_id)
 
 
 @app.delete("/dialogs")
