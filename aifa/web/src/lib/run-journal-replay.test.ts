@@ -48,6 +48,9 @@ describe("replay of the run journal through the A11 envelope", () => {
     expect(events.filter((event) => event.type === "dynamic_move")).toHaveLength(5);
     expect(events.filter((event) => event.type === "plan_graph")).toHaveLength(3);
     expect(events.filter((event) => event.type === "node_run")).toHaveLength(6);
+    expect(events.find((event) => event.type === "turn_documents")).toEqual({
+      type: "turn_documents", document_ids: ["wire-doc-a", "wire-doc-b"],
+    });
     expect(events.find((event) => event.type === "typed_error")).toMatchObject({
       error: { code: "dynamic_run_failed" },
     });

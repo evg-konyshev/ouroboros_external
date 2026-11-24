@@ -31,6 +31,7 @@ class LoopOrigin:
     budget: dict[str, Any] | None = None    # бюджет графа, под которым цикл был открыт
     mode: str = "report"
     agent_id: str = ""
+    filename: str = ""
 
     def to_doc(self) -> dict[str, Any]:
         return {
@@ -40,6 +41,7 @@ class LoopOrigin:
             "methodology_version": self.methodology_version, "budget": self.budget,
             "mode": self.mode,
             "agent_id": self.agent_id,
+            "filename": self.filename,
         }
 
     @classmethod
@@ -51,6 +53,7 @@ class LoopOrigin:
             methodology_version=doc["methodology_version"], budget=doc["budget"],
             mode=doc.get("mode", "report"),
             agent_id=doc.get("agent_id", ""),
+            filename=doc.get("filename", ""),
         )
 
 

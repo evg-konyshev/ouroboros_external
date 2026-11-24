@@ -175,7 +175,7 @@ like) are skipped: those parts are not ported (non-goals in design).
       - alternating moves A → B → A succeed, and both loops' artifacts stay readable.
 
       Verify: `test_schema_budget.py` is green (total ≤ 9,000 < limit 10,000).
-- [ ] 4.5 Turn-level `aifa_finish` and the `turn_documents` event (D5), in `loop_tools.py` and
+- [x] 4.5 Turn-level `aifa_finish` and the `turn_documents` event (D5), in `loop_tools.py` and
       `production_runtime.publish_result`.
       - Producer/consumer: `FinishTool` → `publish_result` → SSE `turn_documents`, consumed by
         `aifa/web/src/lib/api.ts`.

@@ -51,7 +51,8 @@ class LoopOpening:
             if record.scope == "all_workspace" else await _document_text(doc_id)
         )
         store = await asyncio.to_thread(get_store)
-        if not text or await asyncio.to_thread(store.get_document, doc_id) is None:
+        meta = await asyncio.to_thread(store.get_document, doc_id)
+        if not text or meta is None:
             return NoDocument(
                 "Текст отчёта ещё не готов или не распознан: попроси пользователя подождать или загрузить его заново."
             )
@@ -59,7 +60,7 @@ class LoopOpening:
         await asyncio.to_thread(
             open_agent_loop, open_loop=opener, owner_id=record.user_id, case_id=record.case_id, document_id=doc_id,
             document_text=text, message=record.message, role=interface_role(record.role),
-            event_sink=None, document_store=store, trace_id=record.trace_id,
+            event_sink=None, document_store=store, trace_id=record.trace_id, filename=meta.filename,
         )
         opened = self._desk.live(record.run_id, doc_id)
         if opened is None:

@@ -79,15 +79,15 @@ class ExclusiveTool:
                     job = self._board.start(call.ctx.run_id, self.name, operation.wait(), job_id=operation.job_id)
                 return await reply_of(self._board, job, settings.ouroboros_goal_wait_sec)
         job = self._board.start(
-            call.ctx.run_id, self.name, self._queued(loop, call.args, operation),
+            call.ctx.run_id, self.name, self._queued(loop, call, operation),
             job_id=operation.job_id if operation else None,
         )
         return await reply_of(self._board, job, settings.ouroboros_goal_wait_sec)
 
-    async def _queued(self, loop: OpenLoop, args: dict[str, Any], operation: Operation | None = None) -> str:
+    async def _queued(self, loop: OpenLoop, call: BoundCall, operation: Operation | None = None) -> str:
         async with self._desk.queue_of(loop.run_id):
             try:
-                text = await asyncio.to_thread(self._execute_live, loop, args)
+                text = await self._execute_in_queue(loop, call)
             except Exception as exc:
                 # Без записи итога повтор этого operation_id ждал бы результат, которого не будет.
                 if operation is not None:
@@ -97,8 +97,11 @@ class ExclusiveTool:
                 await asyncio.to_thread(operation.finish, text)
             return text
 
+    async def _execute_in_queue(self, loop: OpenLoop, call: BoundCall) -> str:
+        return await asyncio.to_thread(self._execute_live, loop, call.args)
+
     def _execute_live(self, loop: OpenLoop, args: dict[str, Any]) -> str:
-        if not self.finish_turn and loop.doc_id is not None and not _document_exists(loop.doc_id):
+        if loop.doc_id is not None and not _document_exists(loop.doc_id):
             return ouro_view.refusal(Refusal.NO_DOCUMENT, "Документ удалён.")
         return self._execute(loop, args)
 
@@ -157,7 +160,11 @@ class FinishTool(ExclusiveTool):
         super().__init__(board, desk)
         self._subtasks = subtasks
 
-    def _execute(self, loop: OpenLoop, args: dict[str, Any]) -> str:
+    async def _execute_in_queue(self, loop: OpenLoop, call: BoundCall) -> str:
+        loops = await self._desk.loops_of(call)
+        return await asyncio.to_thread(self._finish, loop, call.args, loops)
+
+    def _finish(self, loop: OpenLoop, args: dict[str, Any], loops: tuple[OpenLoop, ...]) -> str:
         session = loop.session
         if session.closed:
             return ouro_view.refusal(Refusal.LOOP_CLOSED, "Цикл уже закрыт: aifa_finish принят раньше.")
@@ -180,6 +187,15 @@ class FinishTool(ExclusiveTool):
             result, refused = session.stopped(checked), str(checked)
         else:
             result, refused = session.finish(checked), ""
-        self._desk.save(loop.run_id, loop.doc_id)
-        publish_result(result, session.event_sink, case_id=session.case_id, document_id=loop.origin.document_id or "")
-        return ouro_view.accepted(result, reason=refused, unfinished=self._subtasks.unfinished(loop.run_id))
+        for opened in loops:
+            opened.session.closed = True
+            self._desk.save(opened.run_id, opened.doc_id)
+        document_ids = tuple(opened.doc_id for opened in loops if opened.doc_id is not None)
+        filenames = tuple(opened.origin.filename or opened.doc_id for opened in loops if opened.doc_id is not None)
+        publish_result(
+            result, session.event_sink, case_id=session.case_id, document_id=loop.origin.document_id or "",
+            document_ids=document_ids,
+        )
+        return ouro_view.accepted(
+            result, reason=refused, unfinished=self._subtasks.unfinished(loop.run_id), filenames=filenames,
+        )

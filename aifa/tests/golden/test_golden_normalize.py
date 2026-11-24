@@ -51,6 +51,12 @@ def normalized(raw: Sequence[Mapping[str, Any]]) -> list[Any]:
     return list(normalize_turn(raw).events)
 
 
+def test_turn_documents_keeps_order_and_masks_document_ids() -> None:
+    assert normalized([{"type": "turn_documents", "document_ids": ["report-a", "report-b"]}]) == [
+        {"type": "turn_documents", "document_ids": ["<id:1>", "<id:2>"]},
+    ]
+
+
 DONE = {"event_type": "completed", "status": "succeeded"}
 
 

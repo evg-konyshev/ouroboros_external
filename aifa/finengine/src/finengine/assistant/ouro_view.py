@@ -349,11 +349,16 @@ def limited(reason: str) -> str:
     return f"{Code.LIMIT}\nЦикл исчерпан: {reason}. Исполнять новые ходы нельзя — принимается только aifa_finish."
 
 
-def accepted(result: DynamicRunResult, *, reason: str = "", unfinished: list[str] | None = None) -> str:
+def accepted(
+    result: DynamicRunResult, *, reason: str = "", unfinished: list[str] | None = None,
+    filenames: tuple[str, ...] = (),
+) -> str:
     """Ответ `aifa_finish`: цикл закрыт; текст ответа пользователю пишет ouroboros (ADR-0044 п. 2).
 
     `unfinished` — подзадачи хода, которых служба не видела завершёнными (ADR-0043 п. 8): их снимает `cancel_task`."""
     lines = [f"{Code.ACCEPTED}", "Цикл закрыт."]
+    if filenames:
+        lines.append("Документы хода: " + ", ".join(filenames) + ".")
     if unfinished:
         lines.append(f"Подзадачи хода, которые ещё не закончили: {', '.join(unfinished)} — сними их cancel_task.")
     if result.deliverables:

@@ -104,6 +104,7 @@ ID_KEYS = frozenset(
         "project_id",
         "file_id",
         "doc_id",
+        "document_ids",
         "nonce",
         "node_run_id",
         "metric_id",

@@ -415,6 +415,19 @@
     "sequence": 14
   },
   {
+    "event_type": "legacy",
+    "legacy_event": {
+      "document_ids": [
+        "wire-doc-a",
+        "wire-doc-b"
+      ],
+      "type": "turn_documents"
+    },
+    "run_id": "wire-run",
+    "schema_version": "1.0",
+    "sequence": 15
+  },
+  {
     "error": {
       "code": "dynamic_run_failed",
       "details": {},
@@ -426,13 +439,13 @@
     "partial_results": [],
     "run_id": "wire-run",
     "schema_version": "1.0",
-    "sequence": 15
+    "sequence": 16
   },
   {
     "event_type": "completed",
     "run_id": "wire-run",
     "schema_version": "1.0",
-    "sequence": 16,
+    "sequence": 17,
     "status": "failed"
   }
 ]

@@ -226,6 +226,7 @@ def _wire_source_events() -> list[dict]:
         dynamic_move_event(move=3, status="running", action="execute"),
         plan_graph_event(open_graph),
         node_run_event(_timed_run(open_graph, 0, "running", []), plan_graph_hash="wire-c"),
+        {"type": "turn_documents", "document_ids": ["wire-doc-a", "wire-doc-b"]},
         {
             "type": "typed_error", "partial_results": [],
             "error": {"code": "dynamic_run_failed", "message": "сбой цикла", "retryable": False,

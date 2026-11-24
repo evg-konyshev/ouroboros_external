@@ -111,6 +111,15 @@ class LoopDesk:
         async with self._restoring:
             return await asyncio.to_thread(self.report_ids, call.ctx.run_id, call.record.user_id)
 
+    async def loops_of(self, call: BoundCall) -> tuple[OpenLoop, ...]:
+        reports = await self.report_ids_of(call)
+        result = []
+        for doc_id in reports or (None,):
+            loop = await self.open_loop_of(call, doc_id)
+            if loop is not None:
+                result.append(loop)
+        return tuple(result)
+
     @staticmethod
     def _index_report(run_id: str, user_id: int | str, doc_id: str) -> None:
         state.mutate(

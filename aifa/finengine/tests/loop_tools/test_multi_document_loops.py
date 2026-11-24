@@ -342,3 +342,28 @@ async def test_alternating_moves_pass_their_frozen_passports(registry, monkeypat
     finally:
         await plugin.close()
         await run.end()
+
+
+async def test_one_finish_closes_both_loops_and_announces_both_documents(two_loops):
+    run, desk, plugin, ctx = two_loops
+    for doc_id in (DOC, B):
+        assert first_line(await plugin.call("aifa_move", ctx, {**MOVE, "doc_id": doc_id})) == "ГОТОВО"
+    first, second = desk.live(run.run_id, DOC), desk.live(run.run_id, B)
+    rows = first.session.runtime.store.list_artifacts(OWNER, CHAT)
+    by_version = {row["document_version"]: row["evidence_ids"][0] for row in rows if row["output_type"] == "ExtractedMetric"}
+    metrics = [by_version[loop.session.target.document_version] for loop in (first, second)]
+
+    result = await plugin.call("aifa_finish", ctx, {"action": "finalize", "evidence_ids": metrics})
+    assert first_line(result) == "ПРИНЯТО"
+    assert all(f"{doc_id}.pdf" in result.text for doc_id in (DOC, B))
+    assert first.session.closed and second.session.closed
+    for doc_id in (DOC, B):
+        assert first_line(await plugin.call("aifa_move", ctx, {**MOVE, "doc_id": doc_id})) == "ОТКАЗ цикл_закрыт"
+    assert first_line(await plugin.call("aifa_finish", ctx, {"action": "give_up"})) == "ОТКАЗ цикл_закрыт"
+    assert first_line(await plugin.call("aifa_open", ctx, {"doc_id": DOC})) == "ОТКАЗ цикл_закрыт"
+    await run.end()
+    events = await run.events()
+    documents = [e for e in events if e.get("type") == "turn_documents"]
+    assert documents == [{"type": "turn_documents", "document_ids": [DOC, B]}]
+    first_card = next(i for i, event in enumerate(events) if event.get("type") == "typed_result")
+    assert events.index(documents[0]) < first_card

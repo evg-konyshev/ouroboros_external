@@ -817,6 +817,7 @@ def _hand_over_loop(
 def open_agent_loop(
     *, open_loop: LoopOpener, owner_id: object, case_id: str, document_id: str, document_text: str,
     message: str, role: str | None, event_sink: EventSink | None, document_store: SqlDocumentStore, trace_id: str = "",
+    filename: str = "",
 ) -> LoopSession:
     """Цикл, который открыл агент (`aifa_open`, ADR-0060 п. 1): сообщение не разбирается, конвейер не запускается.
     Паспорт фиксирует профиль отчёта и реестр; корень шагов несёт только сущность и версию документа."""
@@ -838,7 +839,7 @@ def open_agent_loop(
     budget = context.runtime.executor.budget
     open_loop(session, LoopOrigin(
         owner_id=context.owner_id, case_id=context.case_id, document_id=context.document_id,  # type: ignore[arg-type]
-        goal=goal, target=target, trace_id=context.trace_id, entry_stage="agent",
+        goal=goal, target=target, trace_id=context.trace_id, entry_stage="agent", filename=filename,
         methodology_version=context.passport.methodology_version,
         budget={"max_wall_seconds": budget.max_wall_seconds, "max_atom_calls": budget.max_atom_calls,
                 "max_retries": budget.max_retries},
@@ -877,8 +878,13 @@ def restore_loop_session(
     return session
 
 
-def publish_result(result: DynamicRunResult, event_sink: EventSink | None, *, case_id: str, document_id: str) -> None:
+def publish_result(
+    result: DynamicRunResult, event_sink: EventSink | None, *, case_id: str, document_id: str,
+    document_ids: tuple[str, ...],
+) -> None:
     """Итог цикла на экран: карточки результатов и файлы — как у цикла, который вела служба."""
+    if event_sink is not None and document_ids:
+        event_sink({"type": "turn_documents", "document_ids": list(document_ids)})
     _dynamic_outcome(result, event_sink, case_id=case_id, document_id=document_id)
 
 

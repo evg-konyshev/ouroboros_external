@@ -420,6 +420,7 @@ export type ChatStreamEvent =
   | { type: "sources"; sources: Record<string, unknown>[] }
   | { type: "usage"; turn: TurnUsage; project_total: ProjectUsage }
   | { type: "analysis_card"; card: AnalysisCard }
+  | { type: "turn_documents"; document_ids: string[] }
   | { type: "typed_result"; result: TypedResult; status: "complete" | "partial" }
   | { type: "node_run"; plan_graph_hash: string; node_run: NodeRunContract }
   | { type: "plan_graph"; graph_hash: string; planner_version?: string; root: NodeKeyContract; nodes: PlanGraphContract["nodes"]; scenarios?: PlanGraphContract["scenarios"] }

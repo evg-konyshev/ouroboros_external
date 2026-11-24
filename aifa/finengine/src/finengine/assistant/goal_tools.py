@@ -89,6 +89,8 @@ class OpenTool:
         if mode == "report" and market_job is not None and not market_job.task.done():
             return ouro_view.refusal(Refusal.BAD_ARGUMENTS, "Открытие рыночного цикла уже принято")
         existing = self._desk.live(run_id)
+        if existing is not None and existing.session.closed:
+            return ouro_view.refusal(Refusal.LOOP_CLOSED, "Ход уже завершён aifa_finish.")
         if existing is not None and existing.origin.mode != mode:
             return ouro_view.refusal(Refusal.BAD_ARGUMENTS, "Режим уже открытого цикла менять нельзя")
         # C3.3: повторный вызов в ходе — то же задание; открытый цикл не открывается заново, ответ — его состояние.
@@ -103,6 +105,8 @@ class OpenTool:
     async def _queued_answer(self, call: BoundCall, doc_id: str | None, problem: str | None) -> str:
         async with self._desk.queue_of(call.ctx.run_id):
             existing = await self._desk.open_loop_of(call)
+            if existing is not None and existing.session.closed:
+                return ouro_view.refusal(Refusal.LOOP_CLOSED, "Ход уже завершён aifa_finish.")
             if existing is not None and existing.origin.mode != call.args.get("mode", "report"):
                 return ouro_view.refusal(Refusal.BAD_ARGUMENTS, "Режим уже открытого цикла менять нельзя")
             if problem is not None:
@@ -186,10 +190,9 @@ class WaitTool:
     async def _subtask(self, call: BoundCall) -> str:
         """Срок подзадачи — от первого опроса и не дольше времени цикла; вне цикла — только срок (ADR-0044 п. 5)."""
         task_id = call.args["task_id"]
-        opened = await self._desk.report_ids_of(call)
-        cycles = [await self._desk.open_loop_of(call, doc_id) for doc_id in opened or (None,)]
+        cycles = await self._desk.loops_of(call)
         cycle_ends_at = max(
-            (loop.session.opened_at + loop.session.limits.max_wall_seconds for loop in cycles if loop is not None),
+            (loop.session.opened_at + loop.session.limits.max_wall_seconds for loop in cycles),
             default=None,
         )
         try:
