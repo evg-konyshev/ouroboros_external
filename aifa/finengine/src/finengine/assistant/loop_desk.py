@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from finengine.assistant.tool_call import BoundCall
@@ -54,7 +54,6 @@ class OpenLoop:
     session: LoopSession
     origin: LoopOrigin
     user_id: int | str
-    queue: asyncio.Lock = field(default_factory=asyncio.Lock)  # изменяющие вызовы хода — по одному (ADR-0043 п. 4)
 
 
 @dataclass(frozen=True)
@@ -73,7 +72,15 @@ class HandOver:
 class LoopDesk:
     def __init__(self) -> None:
         self._open: dict[str, OpenLoop] = {}
+        self._queues: dict[str, asyncio.Lock] = {}
         self._restoring = asyncio.Lock()
+
+    @staticmethod
+    def loop_key(run_id: str, doc_id: str | None = None) -> str:
+        return run_id if doc_id is None else f"{run_id}/{doc_id}"
+
+    def queue_of(self, run_id: str) -> asyncio.Lock:
+        return self._queues.setdefault(run_id, asyncio.Lock())
 
     def opener(self, run_id: str, user_id: int | str, emitter: LoopEmitter) -> LoopOpener:
         return HandOver(self, run_id, user_id, emitter)
@@ -87,7 +94,7 @@ class LoopDesk:
         self.save(run_id)
 
     def live(self, run_id: str) -> OpenLoop | None:
-        return self._open.get(run_id)
+        return self._open.get(self.loop_key(run_id))
 
     async def open_loop_of(self, call: BoundCall) -> OpenLoop | None:
         """Открытый цикл хода: из памяти, иначе из сохранённого; `None` — цикл в этом ходе не открывали."""
@@ -131,4 +138,5 @@ class LoopDesk:
         for run_id, loop in list(self._open.items()):
             if not run_is_active(run_id):
                 del self._open[run_id]
+                self._queues.pop(run_id, None)
                 state.delete_one(state.LOOP_SESSION, owner=loop.user_id, key=run_id)

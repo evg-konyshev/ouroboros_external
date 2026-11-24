@@ -127,7 +127,7 @@ like) are skipped: those parts are not ported (non-goals in design).
 
 ## 4. Loops per document
 
-- [ ] 4.1 **Refactor commit (compatible, separate).** Move `OpenLoop.queue` to
+- [x] 4.1 **Refactor commit (compatible, separate).** Move `OpenLoop.queue` to
       `LoopDesk.queue_of(run_id)`, and give `LoopDesk` a loop key helper (D2, D3). Behaviour is
       unchanged. Composition check, green with no test edits:
       - `tests/loop_tools/test_open_and_restore.py`

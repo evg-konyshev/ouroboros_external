@@ -61,7 +61,7 @@ class ExclusiveTool:
         return await reply_of(self._board, job, settings.ouroboros_goal_wait_sec)
 
     async def _queued(self, loop: OpenLoop, args: dict[str, Any], operation: Operation | None = None) -> str:
-        async with loop.queue:
+        async with self._desk.queue_of(loop.run_id):
             try:
                 text = await asyncio.to_thread(self._execute, loop, args)
             except Exception as exc:
