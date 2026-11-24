@@ -27,11 +27,16 @@ class Match:
     fragment: str
 
 
-def pages_of(text: str) -> list[Page]:
-    """Страницы по разметке OCR; без неё — части по `CHUNK_CHARS` знаков с номерами с 1."""
+def pages_of(text: str, *, unmarked_page: int | None = None) -> list[Page]:
+    """Страницы по разметке, без неё — части текста или одна область с заданным номером."""
     marks = list(_PAGE_MARK.finditer(text))
     if not marks:
-        return [Page(index, text[start : start + CHUNK_CHARS]) for index, start in enumerate(range(0, len(text), CHUNK_CHARS), 1)]
+        if unmarked_page is not None:
+            return [Page(unmarked_page, text)] if text else []
+        return [
+            Page(index, text[start : start + CHUNK_CHARS])
+            for index, start in enumerate(range(0, len(text), CHUNK_CHARS), 1)
+        ]
     return [
         Page(int(mark.group(1)), text[mark.end() : marks[index + 1].start() if index + 1 < len(marks) else len(text)])
         for index, mark in enumerate(marks)

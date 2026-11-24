@@ -74,6 +74,7 @@ dependencies = [
     # related primitives. We pull it directly from git (the lib is not on
     # PyPI) so the chains.py file can stay byte-identical with upstream.
     "mmar-carl @ git+https://github.com/AIRI-Institute/maestro-core.git@main#subdirectory=lib--mmar-carl",
+    "opensearch-py==2.8.0",
 ]
 
 # camelot-py + plotly + streamlit are dev/notebook-only — keep them out of

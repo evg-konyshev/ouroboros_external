@@ -10,6 +10,7 @@ import json
 from enum import StrEnum
 
 from finengine.assistant.doc_pages import Match, Page
+from finengine.search.search import SearchHit
 from finengine.skills.spec.dynamic_run import (
     ARTIFACTS_HEADER,
     ARTIFACTS_TITLE,
@@ -60,6 +61,7 @@ class Refusal(StrEnum):
     REPORTS_LIMIT = "лимит_отчётов"
     JOB_NOT_FOUND = "задание_не_найдено"
     SUBTASK_SILENT = "подзадача_не_ответила"
+    SEARCH_DOWN = "поиск_недоступен"
 
 
 def refusal(code: Refusal, why: str) -> str:
@@ -394,3 +396,41 @@ def doc_matches(doc_id: str, query: str, matches: list[Match]) -> str:
         return f"{Code.READY}\n## {doc_id}, поиск «{query}»\nНичего не найдено."
     lines = [f"стр. {match.page}: …{match.fragment}…" for match in matches]
     return f"{Code.READY}\n## {doc_id}, поиск «{query}»\n" + "\n".join(lines)
+
+
+def _search_locator(hit: SearchHit) -> str:
+    page = f"стр. {hit.page}" if hit.page else "страница не определена"
+    return f"### {hit.document_id} | {page}"
+
+
+def _search_heading(hit: SearchHit) -> str:
+    section = f" | {hit.section_path}" if hit.section_path else ""
+    return _search_locator(hit) + section
+
+
+def search_hits(hits: list[SearchHit], *, degraded: bool, limit: int) -> str:
+    limit = max(0, limit)
+    head = f"{Code.READY}\n## Поиск по документам\n"
+    if degraded:
+        head += "деградированный поиск: OpenSearch недоступен, показаны совпадения по текстам\n"
+    if not hits:
+        return (head + "Ничего не найдено.")[:limit]
+    parts = [f"{_search_heading(hit)}\n{hit.content}\n\n" for hit in hits]
+    if len(head) + sum(map(len, parts)) <= limit:
+        return (head + "".join(parts)).rstrip()
+
+    marker = "\n…[ответ обрезан]"
+    room = limit - len(head) - len(marker)
+    shown = []
+    for part in parts:
+        if len(part) <= room:
+            shown.append(part)
+            room -= len(part)
+    excerpts = "".join(shown)
+    if not shown:
+        hit = hits[0]
+        heading = _search_heading(hit)
+        if len(heading) >= room // 2:
+            heading = _search_locator(hit)
+        excerpts = f"{heading}\n{hit.content}"[:max(room, 0)]
+    return (head + excerpts.rstrip() + marker)[:limit]

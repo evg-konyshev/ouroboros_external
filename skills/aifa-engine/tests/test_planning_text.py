@@ -137,6 +137,28 @@ def test_the_document_is_read_by_pages_and_search_not_whole() -> None:
     assert "не целиком" in section
 
 
+def test_search_guidance_covers_modes_size_and_the_degraded_mark() -> None:
+    section = guide().split("### Документ и артефакты", 1)[1].split("###", 1)[0]
+
+    for phrase in (
+        "aifa_search",
+        "качественного ответа",
+        "нескольких документов",
+        "aifa_doc",
+        "точных страниц",
+        "двухстадийный",
+        'mode="lexical"',
+        "точных терминов и цифр",
+        "поиск_недоступен",
+        "до 8 чанков",
+        "до 3",
+        "limit",
+        "деградированный поиск",
+        "подстрокой",
+    ):
+        assert phrase in section, phrase
+
+
 def test_the_final_answer_is_the_models_own_and_finish_carries_the_evidence_ids() -> None:
     """ADR-0040 п. 1 и 4: канонического текста нет; `evidence_ids` передаются — по ним замер после MVP."""
     section = guide().split("### Завершение", 1)[1]

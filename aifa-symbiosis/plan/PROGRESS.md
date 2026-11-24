@@ -22,6 +22,7 @@
 
 | № | Шаг | Реализация | Ревью | Коммиты (база..конец) |
 |---|---|---|---|---|
+| aifa-document-search | OpenSearch и `aifa_search` | ADR-0102 принята; 93 поисковые проверки зелёные после доработки; общий gate остаётся красным, стендовая 6.3 открыта | **можно дальше**: повторное независимое ревью исправлений не выявило открытых блокеров | без коммита |
 | aifa-workspaces | `workspace_id` для документов и синхронизация через папки | доработка P137 завершена: ownership workspace/document атомарен, dry-run без записей, default и folder metadata backfill исправлены, concurrent guards добавлены; 44 workspace-теста зелёные; открыта только стендовая 5.3 (P138) | **можно дальше с замечаниями** (`reviews/aifa-workspaces.md`): повторные независимые ревью без блокеров; прежний красный общий gate остаётся открытым долгом | без коммита |
 | 28 | Дайджест через `aifa_move`, цикл без отчёта ([план](28-market-digest.md)) | ADR-0098 принята владельцем (28.10.2026); код 28.0–28.4 и инструкции 28.5 готовы в рабочем дереве, не закоммичены; живой dev-smoke и выкатка не выполнялись | ревью диффа в чистом контексте: блокеров нет, замечание про импорты `SqlStateStore.claim` закрыто; финальное ревью после этой сессии не повторялось | без коммита |
 | 01 | Единый репозиторий и перенос AIFA | готово (P8 решён ADR-0032; открыты P12, P13) | с замечаниями (P14–P16) | `17b3f93..sym/01-repozitoriy` |
@@ -70,6 +71,33 @@
 ---
 
 ## 3. Журнал сессий
+
+### 24.11.2026 · Доработка `aifa-document-search` по ревью
+
+- Исправлены фильтрация kNN и слияние рангов, проверка прав администратора, страницы PyMuPDF, длинные таблицы Markdown, предел ответа, деградация при сбоях отдельных текстов, аргумент `mode` и безопасные диагностики провайдера. Для старых PDF без разметки поиск показывает, что физическая страница неизвестна.
+- Запись закреплена за конкретным индексом и проверяет снимок документа перед заменой. Карточка появляется после чанков и несёт ревизию текста и метаданных в id. Пересборка наполняет новый индекс до переключения, затем сверяет новые и изменившиеся документы. Корневые `pyproject.toml` и `uv.lock` совпадают с базой `17b3f93`. Миграция workspace 5.3 остаётся открытой (P138).
+- **Проверки**: новые регрессии воспроизвелись до исправлений на изолированных PostgreSQL 16 и OpenSearch 2.19.2. После исправлений прошли 93 поисковых теста, 63 проверки конфигурации и навыков, 26 проверок соседних инструментов чтения и привязки хода. Один тест с живым провайдером пропущен. Повторное независимое ревью проверило исправления по ADR и OpenSpec, открытых блокеров по ним нет.
+- **Ворота**: полный повторный прогон прерван по таймауту приложения. Корневой gate останавливается на форматировании трёх файлов, совпадающих с `HEAD`. Ruff службы даёт те же 41 диагностику, что на `HEAD`. Mypy изменённых модулей чист, четыре диагностики `api/main.py` воспроизводятся на `HEAD`. Архитектурные проверки дали 96 passed, F1/F11 остановились из-за отсутствующего тега. Стенд и живой провайдер ждут проверки 6.3 (P140).
+
+### 24.11.2026 · Реализация `aifa-document-search` · шаг aifa-document-search
+
+- ADR-0102 принята владельцем. Добавлены OpenSearch-проекция (карточки и чанки), GigaChat/OpenRouter embeddings, индексация после публикации текста и при удалении, `index_state` отдельной колонкой, init/rebuild/reconcile, двухстадийный hybrid/lexical поиск с RRF k=60, деградированный поиск и `aifa_search`. Схема занимает 6608 знаков; dev budget 10000, цель F4 — 9000.
+- Зависимости и образы: `opensearch-py==2.8.0` и `events==0.5` зафиксированы через публичный PyPI вместо недоступного Nexus, `uv sync --frozen` успешен. Образ `opensearchproject/opensearch:2.19.2`, digest `sha256:69588c664014fa3d3260ed5dd337f8538fec94790dad00bfbe92301eaaaac240`; `docker compose config -q` успешен.
+- **Проверки**: 69 поисковых тестов passed, 1 live-провайдер skipped; реальные PostgreSQL 16 и OpenSearch 2.19.2, включая фоновую загрузку, reconcile, доступ и сквозной ToolApi → SearchTool → DocumentSearch. F4/F9/F13 и тексты навыка — 76 passed. Ruff чист; mypy 12 новых модулей — no issues. Независимые ревью Standards/Spec и повторная проверка исправлений: **открытых блокеров нет**.
+- **Что и почему**: состояние не хранится в `meta`, чтобы перезаписи документа его не стирали; сверка сравнивает реестр с карточками, а не с `index_state`. Русский analyzer нужен для совпадений форм слов. Деградированный путь сначала использует карточки, а при пустом выборе сканирует только разрешённые тексты, чтобы запрос из тела документа не пропадал.
+- **Полный gate**: первый запуск — 135 failed/5212 passed/235 skipped/7 errors, симбиоз 2 failed из-за отсутствующего базового тега, frontend без node_modules; две ошибки таблицы кодов и одна типизация F9 исправлены. Финальный запуск — 133 failed/5217 passed/239 skipped/7 errors; сравнение множеств FAILED/ERROR с первым прогоном: **новых падений нет**, две ошибки таблицы кодов устранены. Симбиоз: ruff/format/mypy strict зелёные, 224 passed/44 skipped и два известных сбоя F1/F11 из-за отсутствующего `base/ouroboros-1.5.1`. Frontend: 445 passed/2 таймаута; оба файла изолированно — 7/7 passed.
+- **Не сделано**: 6.3 — выкатка, reconcile на aifa-sym, benchmark и живой вопрос по двум отчётам ждут сигнала владельца. Точные исходники и benchmark RFA недоступны (Gitverse 404, SSH publickey); поведение восстановлено по design.md.
+
+| Тест RFA | Наш тест | Пропущено и причина |
+|---|---|---|
+| `unit/test_index_strategy.py`, mapping/alias `test_opensearch_projection.py` | `test_search_index_schema.py`, `test_search_client.py` | Исходники RFA недоступны; сценарии восстановлены по S1 |
+| `unit/test_embed_providers.py`, `test_embed_bridge.py`, `test_vector_store_dimension.py` | `test_search_embeddings.py` | Исходники RFA недоступны; `test_openrouter_identity_headers.py` вне плана |
+| `test_chunker.py`, `unit/test_financial_pages.py`, `test_text_identity.py`, `test_citation_place.py` | `test_search_chunker.py` + текстовая fixture | OCR JSON заменён `===PAGE N===`; spreadsheet-ветка вне плана |
+| `test_document_card.py`, `test_company_key.py` | `test_search_card.py` | RFA DB-поля заменены `DocumentMeta` и мета-карточкой |
+| `test_search_indexing.py`, write/delete `test_opensearch_projection.py` | `test_search_indexing.py` | Worker/lease/state machine заменены фоновой задачей; вне плана |
+| `test_reindex_opensearch.py` | `test_search_reindex.py` | Исходники RFA недоступны |
+| `test_hybrid_search.py`, `unit/test_computed_chunk_search.py`, hybrid cases `test_analysis_retrieval.py` | `test_search_search.py`, `test_search_answer_size.py` | Per-document top-up вне плана |
+| `test_spreadsheet_*`, `test_worker_*` | — | Вне плана по tasks.md |
 
 ### 23.11.2026 · Доработка `aifa-workspaces` по независимому ревью · шаг aifa-workspaces
 
@@ -1461,6 +1489,8 @@
 | P136 | 23 (UI) | готовый текст повторно заказан из-за обрезки ответа; UI не показывает root task_plan | результаты существуют, но их обнаружение и проекции состояния не согласованы с исполнением | отдельно обеспечить адресный доступ к итоговым артефактам и проекцию root-плана в UI; reports/23-dev-ui.md | частично решено: индекс/compact и watchdog исправлены (ADR-0062/0063); проекция root-плана в UI остаётся открытой |
 | P137 | aifa-workspaces (ревью) | Блокеры: conflict-upsert перезаписывает владельца workspace; dry-run backfill пишет workspace; apply для документа вне папок не создаёт default workspace. Важно: первый собственный `owner:<id>` получает 404, upsert меняет `created_at`, молчаливый `except Exception`, вложенные функции/lazy-импорты/SQLite-тест нарушают стандарты; в change попали `.agents/skills/openspec-*`. Узкие тесты зелёные, но обязательные сценарии не покрыты | доработка выполнена, включая находки повторных ревью: concurrent owner change, foreign backfill collision, delayed folder rename и concurrent backfill assignment | исправлены store/API/migration и стандарты; добавлены регрессии, 44 workspace-теста passed, ruff/mypy changed stores green; повторные независимые ревью без блокеров. `.agents` оставлены untracked по явному решению владельца. `reviews/aifa-workspaces.md` | решено |
 | P138 | aifa-workspaces | Миграция на `aifa-sym` (tasks 5.3) не выполнялась: dry-run/apply и загрузка в папку на стенде не проверены | требуется сигнал владельца; до исправления P137 запуск миграции небезопасен | после закрытия P137 и сигнала владельца: dry-run, разбор конфликтов, apply, `count(document.workspace_id IS NULL)=0`, проверка нового upload в folder chat | открыто |
+| P139 | aifa-document-search | Точные исходники RFA и `test_benchmark/long_table_recall.py` недоступны: Gitverse отвечает 404, SSH — publickey | поведение и проверки восстановлены по design.md; это не доказывает численное соответствие RFA | при доступном RFA: сверить перенесённые тесты, выполнить benchmark на тех же документах и записать recall рядом с RFA | открыто |
+| P140 | aifa-document-search | Выкатка и приёмка 6.3 на `aifa-sym` не выполнялись: нет сигнала владельца | локальные PostgreSQL/OpenSearch и сквозной ToolApi проверены; стенд не менялся | после сигнала: проверить disk/RAM, выкатить, `reindex --init` и `--reconcile`, сравнить карточки с ready-документами, задать живой вопрос по двум отчётам | открыто |
 
 ---
 

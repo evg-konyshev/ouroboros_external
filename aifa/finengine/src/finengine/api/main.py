@@ -36,7 +36,9 @@ from finengine.auth.bootstrap import bootstrap_admin  # noqa: E402
 from finengine.auth.db import User  # noqa: E402
 from finengine.auth.dependencies import get_current_user  # noqa: E402
 from finengine.auth.routes import router as auth_router  # noqa: E402
+from finengine.auth.visibility import user_can_see  # noqa: E402
 from finengine.demo.routes import router as demo_router  # noqa: E402
+from finengine.search import indexing  # noqa: E402
 from finengine.config import settings  # noqa: E402
 from finengine.ingestion.pdf_parser import parse_pdf  # noqa: E402
 from finengine.ingestion.document_store import get_store  # noqa: E402
@@ -554,14 +556,17 @@ def _parse_doc_in_background(
                 relevant = [c for c in ch if c.chunk_type in ("text", "financial_table", "table")]
                 relevant.sort(key=lambda c: (c.page or 0, 0 if c.chunk_type == "financial_table" else 1))
                 seen = set()
-                uniq: list = []
+                pages: dict[int, list[str]] = {}
                 for c in relevant:
                     key = (c.page, c.chunk_type, c.content[:80])
                     if key in seen:
                         continue
                     seen.add(key)
-                    uniq.append(c)
-                full_text = "\n\n".join(c.content for c in uniq)
+                    pages.setdefault(c.page, []).append(c.content)
+                full_text = "\n\n".join(
+                    f"===PAGE {page}===\n" + "\n\n".join(contents)
+                    for page, contents in pages.items()
+                )
         elif filename.lower().endswith((".txt", ".md")):
             full_text = file_path.read_text(encoding="utf-8")
         else:
@@ -611,6 +616,8 @@ def _parse_doc_in_background(
                     {k: meta.meta_card.get(k) for k in ("doc_kind", "issuer", "period", "error")})
             except Exception:
                 _log_card.getLogger(__name__).exception("метакарта %s не снята", doc_id)
+
+        indexing.index_document(doc_id)
     except Exception as e:
         import logging
         logging.exception("Background parse failed for %s: %s", doc_id, e)
@@ -1233,9 +1240,7 @@ def _user_can_see(doc: DocumentMeta, user: User) -> bool:
     owner_id field existed — pydantic won't synthesise the default for
     unpickled objects, so direct attribute access throws AttributeError.
     """
-    if user.is_admin:
-        return True
-    return getattr(doc, "owner_id", 0) == user.id
+    return user_can_see(doc, user)
 
 
 def _docs_of_the_turn(doc_ids: list[str], user: User) -> list[str]:
@@ -1429,6 +1434,7 @@ def delete_document(doc_id: str, user: User = Depends(get_current_user)):
             Path(doc.file_path).unlink(missing_ok=True)
 
     get_store().remove_document(doc_id)
+    indexing.delete_document(doc_id)
     return {"status": "deleted", "doc_id": doc_id}
 
 
@@ -1577,7 +1583,7 @@ def _start_ouroboros_turn(request: QueryRequest, user: User, doc_ids: list[str],
         run_id=run_id, owner_id=str(user.id), chat_id=chat_id, message=request.message, user_id=user.id,
         case_id=request.project_id or session_id, doc_ids=tuple(doc_ids), active_doc_id=active_doc_id,
         role=request.role or "", trace_id=trace_id,
-        web_search=request.web_search,
+        web_search=request.web_search, is_admin=user.is_admin,
     ))
     # История сессии отбирается по её ходам (CONTRACTS.md §2.6): чат папки делят все её сессии.
     session_turns.record_turn(str(user.id), session_id, run_id=run_id, chat_id=chat_id)

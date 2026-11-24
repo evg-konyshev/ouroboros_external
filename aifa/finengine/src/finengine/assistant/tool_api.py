@@ -26,6 +26,7 @@ from finengine.assistant.loop_desk import LoopDesk
 from finengine.assistant.loop_tools import FinishTool, MoveTool
 from finengine.assistant.ouro_view import Code, Refusal
 from finengine.assistant.read_tools import DocTool, StateTool
+from finengine.assistant.search_tool import SearchFactory, SearchTool
 from finengine.assistant.subtask_waits import SubtaskWaits
 from finengine.assistant.tool_call import BoundCall, ToolCall
 from finengine.config import settings
@@ -54,14 +55,16 @@ class Tool(Protocol):
 
 class ToolApi:
     def __init__(
-        self, gateway: RootSink, opening: Opening, desk: LoopDesk | None = None, subtasks: SubtaskWaits | None = None,
+        self, gateway: RootSink, opening: Opening, desk: LoopDesk | None = None,
+        subtasks: SubtaskWaits | None = None, search_factory: SearchFactory | None = None,
     ) -> None:
         board = JobBoard(settings.ouroboros_run_watch_sec)
         desk = desk or LoopDesk()
         self._subtasks = subtasks or SubtaskWaits()
         self._binding = Binding(gateway)
         tools: tuple[Tool, ...] = (
-            OpenTool(board, opening, desk), WaitTool(board, self._subtasks, desk), StateTool(board, desk), DocTool(board, desk),
+            OpenTool(board, opening, desk), WaitTool(board, self._subtasks, desk),
+            StateTool(board, desk), DocTool(board, desk), SearchTool(board, desk, search_factory),
             AtomsTool(desk),
             MoveTool(board, desk), RegisterTool(board, desk), ReportTool(desk, self._subtasks),
             FinishTool(board, desk, self._subtasks),

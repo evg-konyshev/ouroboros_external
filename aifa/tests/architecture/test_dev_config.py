@@ -27,7 +27,9 @@ SNAPSHOT_FILE = REPO_ROOT / "aifa" / "contracts" / "dev_config.snapshot.json"
 
 PROJECT = "aifa-sym"
 DEFAULT_SERVICES = frozenset({"ouroboros", "ouro-postgres", "s3", "workstation"})
-APP_SERVICES = frozenset({"engine", "engine-postgres", "frontend"})
+APP_SERVICES = frozenset({"engine", "engine-postgres", "frontend", "opensearch"})
+OPENSEARCH_IMAGE = "opensearchproject/opensearch:2.19.2"
+SCHEMA_BUDGET = "OUROBOROS_INITIAL_EXTENSION_SCHEMA_BUDGET"
 # Контейнеры prod и общий вход: цели изменений быть не могут (ADR-0018).
 PROD_TARGETS = ("finengine-prod", "openclaw-prod-gw", "workstation-svc-prod", "finengine-caddy-1")
 LOOPBACK = ("127.0.0.1:", "[::1]:")
@@ -332,6 +334,37 @@ def workstation_limit_violations(
     return problems
 
 
+def search_violations(compose: Mapping[str, Any]) -> list[str]:
+    services: Mapping[str, Mapping[str, Any]] = compose.get("services") or {}
+    search = services.get("opensearch") or {}
+    environment: Mapping[str, Any] = search.get("environment") or {}
+    expected_environment = {
+        "discovery.type": "single-node",
+        "DISABLE_SECURITY_PLUGIN": "true",
+        "OPENSEARCH_JAVA_OPTS": "-Xms1g -Xmx1g",
+    }
+    problems = [
+        f"F9 (ADR-0102): у `opensearch` {key}={environment.get(key)!r}, ждали {expected!r}"
+        for key, expected in expected_environment.items()
+        if str(environment.get(key)) != expected
+    ]
+    if search.get("image") != OPENSEARCH_IMAGE:
+        problems.append(f"F9 (ADR-0102): образ `opensearch` не {OPENSEARCH_IMAGE}")
+    if "os-data:/usr/share/opensearch/data" not in (search.get("volumes") or []):
+        problems.append("F9 (ADR-0102): `opensearch` не монтирует os-data с данными")
+    engine = services.get("engine") or {}
+    engine_environment: Mapping[str, Any] = engine.get("environment") or {}
+    if engine_environment.get("FINENGINE_OPENSEARCH_URL") != "http://opensearch:9200":
+        problems.append("F9 (ADR-0102): engine не получил FINENGINE_OPENSEARCH_URL")
+    if "opensearch" in (engine.get("depends_on") or {}):
+        problems.append("F9 (ADR-0102): engine не должен ждать `opensearch` через depends_on")
+    ouro = services.get("ouroboros") or {}
+    ouro_environment: Mapping[str, Any] = ouro.get("environment") or {}
+    if str(ouro_environment.get(SCHEMA_BUDGET)) != "10000":
+        problems.append(f"F9 (ADR-0102): в compose {SCHEMA_BUDGET} не равен 10000")
+    return problems
+
+
 def dev_config_violations(dev: Path, snapshot: Mapping[str, Any]) -> list[str]:
     ouro = parse_env(dev / "ouroboros.env.example")
     engine = parse_env(dev / "engine.env.example")
@@ -345,6 +378,7 @@ def dev_config_violations(dev: Path, snapshot: Mapping[str, Any]) -> list[str]:
         *database_violations(ouro, engine),
         *compose_violations(compose),
         *workstation_limit_violations(compose, snapshot),
+        *search_violations(compose),
     ]
 
 
@@ -397,6 +431,27 @@ def test_f9_catches_a_changed_required_value(tmp_path: Path) -> None:
     )
     problems = dev_config_violations(dev, load_snapshot())
     assert any("OUROBOROS_HARD_TIMEOUT_SEC" in p and "ADR-0027" in p for p in problems)
+
+
+def test_f9_catches_a_changed_schema_budget(tmp_path: Path) -> None:
+    """F9: нарушитель — бюджет схем отличается от ADR-0102 и в env, и в compose."""
+    dev = _copy_dev(tmp_path)
+    env = dev / "ouroboros.env.example"
+    text = env.read_text(encoding="utf-8")
+    expected = f"{SCHEMA_BUDGET}=10000"
+    violator = f"{SCHEMA_BUDGET}=8000"
+    env.write_text(
+        text.replace(expected, violator, 1) if expected in text else f"{text}\n{violator}\n",
+        encoding="utf-8",
+    )
+    compose_path = dev / "compose.yml"
+    compose = yaml.safe_load(compose_path.read_text(encoding="utf-8"))
+    compose["services"]["ouroboros"]["environment"][SCHEMA_BUDGET] = "8000"
+    compose_path.write_text(yaml.safe_dump(compose, allow_unicode=True), encoding="utf-8")
+
+    problems = dev_config_violations(dev, load_snapshot())
+
+    assert sum(SCHEMA_BUDGET in problem for problem in problems) >= 2
 
 
 def test_f9_catches_a_drifted_tool_list(tmp_path: Path) -> None:
@@ -650,7 +705,7 @@ def test_f9_allows_the_dev_stand_loopback_and_reserved_example_hosts(tmp_path: P
     assert golden_violations(tmp_path) == []
 
 
-def test_dev_execution_budgets_are_doubled_and_hard_timeouts_match():
+def test_dev_execution_budgets_are_doubled_and_hard_timeouts_match() -> None:
     engine = parse_env(DEV_DIR / "engine.env.example")
     root = parse_env(DEV_DIR / "ouroboros.env.example")
     expected = {

@@ -27,12 +27,17 @@ RESERVED = {"лимит_попыток", "лимит_отчётов", "не_та
 # Что отдаёт каждый инструмент помимо отказов, видных в его исходнике (`Refusal.X` внутри класса инструмента):
 # коды `ouro_view.Code`, отказы `check`/`move` цикла, отказы `tool_api` и привязки.
 ANSWERS = {
-    "aifa_open": ["ГОТОВО", "ЖДИ", "СБОЙ_СЛУЖБЫ", "нет_документа", "чужой_ход"],
+    "aifa_open": [
+        "ГОТОВО", "ЖДИ", "СБОЙ_СЛУЖБЫ", "нет_документа", "неверные_аргументы", "задание_не_найдено", "чужой_ход",
+    ],
     "aifa_wait": [
-        "ГОТОВО", "ЖДИ", "СБОЙ_СЛУЖБЫ", "неверные_аргументы", "задание_не_найдено", "подзадача_не_ответила", "чужой_ход",
+        "ГОТОВО", "ЖДИ", "СБОЙ_СЛУЖБЫ", "неверные_аргументы", "задание_не_найдено", "подзадача_не_ответила", "нет_цикла", "чужой_ход",
     ],
     "aifa_state": ["ГОТОВО", "СБОЙ_СЛУЖБЫ", "неверные_аргументы", "нет_цикла", "чужой_ход"],
     "aifa_doc": ["ГОТОВО", "СБОЙ_СЛУЖБЫ", "нет_документа", "неверные_аргументы", "нет_цикла", "чужой_ход"],
+    "aifa_search": [
+        "ГОТОВО", "СБОЙ_СЛУЖБЫ", "нет_документа", "неверные_аргументы", "нет_цикла", "поиск_недоступен", "чужой_ход",
+    ],
     "aifa_atoms": ["ГОТОВО", "СБОЙ_СЛУЖБЫ", "неверные_аргументы", "нет_цикла", "чужой_ход"],
     "aifa_move": [
         "ГОТОВО", "ЖДИ", "ЛИМИТ", "СБОЙ_СЛУЖБЫ", "неверные_аргументы", "нет_цикла", "цикл_закрыт", "повтор_тупика",
@@ -42,7 +47,7 @@ ANSWERS = {
         "ПРИНЯТО", "ЖДИ", "СБОЙ_СЛУЖБЫ", "неверные_аргументы", "нет_цикла", "цикл_закрыт", "файл_не_собран", "чужой_ход",
     ],
 }  # fmt: skip
-MODULES = ("goal_tools.py", "loop_tools.py", "read_tools.py", "atoms_tool.py")
+MODULES = ("goal_tools.py", "loop_tools.py", "read_tools.py", "atoms_tool.py", "search_tool.py")
 
 
 class Row:
@@ -105,7 +110,16 @@ def direct_refusals() -> dict[str, set[str]]:
             refusals = {
                 values[sub.attr]
                 for sub in ast.walk(node)
-                if isinstance(sub, ast.Attribute) and isinstance(sub.value, ast.Name) and sub.value.id == "Refusal"
+                if isinstance(sub, ast.Attribute)
+                and (
+                    (isinstance(sub.value, ast.Name) and sub.value.id == "Refusal")
+                    or (
+                        isinstance(sub.value, ast.Attribute)
+                        and sub.value.attr == "Refusal"
+                        and isinstance(sub.value.value, ast.Name)
+                        and sub.value.value.id == "ouro_view"
+                    )
+                )
                 and sub.attr in values
             }  # fmt: skip
             if any(isinstance(sub, ast.Name) and sub.id == "no_loop" for sub in ast.walk(node)):

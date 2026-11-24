@@ -23,7 +23,7 @@ a second branch would need its own ADR. If the session budget runs out, the rest
 
 ## 1. Decision record and infrastructure
 
-- [ ] 1.1 Write the ADR (next free number, status «предложено»). It records:
+- [x] 1.1 Write the ADR (next free number, status «предложено»). It records:
       - S1–S6, S8, S9 and the non-goals;
       - the always two-stage pipeline (selection first, chunks inside the selected documents),
         the `mode` parameter with the `hybrid` default, and the adaptive answer size;
@@ -45,11 +45,11 @@ a second branch would need its own ADR. If the session budget runs out, the rest
         `поиск_недоступен` in §3.0, and the next free C3 number for its check.
 
       Verify: F13 green. Gate: owner «принято».
-- [ ] 1.2 Ask the user to confirm `opensearch-py`, then
+- [x] 1.2 Ask the user to confirm `opensearch-py`, then
       `uv add --project aifa/finengine opensearch-py==<pinned>`. Verify:
       `uv sync --frozen --project aifa/finengine` succeeds, and `uv.lock` adds only that package
       and its dependencies.
-- [ ] 1.3 Add the `opensearch` service to `aifa/deploy/dev/compose.yml` (an exact 2.x tag, volume
+- [x] 1.3 Add the `opensearch` service to `aifa/deploy/dev/compose.yml` (an exact 2.x tag, volume
       `os-data`, 1 GB heap). Add the engine env, with no `depends_on`. Add the settings to
       `config.py`. Set `OUROBOROS_INITIAL_EXTENSION_SCHEMA_BUDGET=10000` on the `ouroboros` service
       and in `aifa/contracts/dev_config.snapshot.json`, with an F9 violator test. Verify:
@@ -59,7 +59,7 @@ a second branch would need its own ADR. If the session budget runs out, the rest
 
 ## 2. Index, embeddings, chunks, card
 
-- [ ] 2.1 `search/client.py` and `search/index_schema.py`, ported from RFA, with fields adapted
+- [x] 2.1 `search/client.py` and `search/index_schema.py`, ported from RFA, with fields adapted
       (S1). Tests:
       - the mapping is strict, carries `workspace_id`/`document_id` as keyword, and puts the
         model and dimension in `_meta`;
@@ -67,7 +67,7 @@ a second branch would need its own ADR. If the session budget runs out, the rest
 
       RFA tests: port `unit/test_index_strategy.py` (16) and the mapping and alias part of
       `test_opensearch_projection.py`.
-- [ ] 2.2 `search/embeddings.py` with `gigachat` and `openrouter` (S2). Tests:
+- [x] 2.2 `search/embeddings.py` with `gigachat` and `openrouter` (S2). Tests:
       - batching honours the batch size;
       - an unknown provider raises with the setting's name;
       - a dimension mismatch against index `_meta` → "нужна пересборка".
@@ -77,7 +77,7 @@ a second branch would need its own ADR. If the session budget runs out, the rest
       RFA tests: port `unit/test_embed_providers.py` (9), `unit/test_embed_bridge.py` (3) and
       `unit/test_vector_store_dimension.py` (14). Skip `unit/test_openrouter_identity_headers.py`:
       it covers RFA's identity headers, and our provider headers are not changed by this plan.
-- [ ] 2.3a `search/chunker.py`, a port of RFA `chunk_document`, covering:
+- [x] 2.3a `search/chunker.py`, a port of RFA `chunk_document`, covering:
       - the sentence window 800/100;
       - no crossing of a page, table or Markdown section;
       - `_without_repeated_prose`;
@@ -96,12 +96,12 @@ a second branch would need its own ADR. If the session budget runs out, the rest
       - no prose chunk spans a Markdown heading;
       - a paragraph repeated on pages 3 and 40 is emitted once;
       - no prose chunk exceeds 800 characters.
-- [ ] 2.3b Markdown-table detection without OCR JSON (S1). Tests on fixtures cut from real
+- [x] 2.3b Markdown-table detection without OCR JSON (S1). Tests on fixtures cut from real
       corpus pages:
       - a 300-row table → one chunk starting with its header;
       - a table inside prose → prose chunks around one table chunk;
       - pipe characters in prose are not mistaken for a table.
-- [ ] 2.4 `search/card.py`, plus a port of RFA `analytics/company_key.py`. Tests:
+- [x] 2.4 `search/card.py`, plus a port of RFA `analytics/company_key.py`. Tests:
       - an empty registry `company_name` with meta card `issuer=«Сбербанк»` → card company
         «Сбербанк»;
       - the short description holds only type, company and period;
@@ -113,7 +113,7 @@ a second branch would need its own ADR. If the session budget runs out, the rest
 
 ## 3. Indexing lifecycle
 
-- [ ] 3.1 `search/indexing.py` with `index_document` and `delete_document`. Hook it after the
+- [x] 3.1 `search/indexing.py` with `index_document` and `delete_document`. Hook it after the
       last `add_document` of `_parse_doc_in_background` and after the registry removal in
       `delete_document`. The state goes to the new `document.index_state` column (start-up
       `ADD COLUMN IF NOT EXISTS`) through a single-column `set_index_state` (S3). Tests, with
@@ -134,7 +134,7 @@ a second branch would need its own ADR. If the session budget runs out, the rest
         `test_opensearch_projection.py` (23 in total, split between 2.1 and 3.1);
       - rewrite the worker/lease-driven ones on the background task;
       - skip the parts about RFA's document state machine (`DELETING`, leases): not in this plan.
-- [ ] 3.2 `search/reindex.py` with `--init`, `--rebuild` and `--reconcile`. Reconcile compares
+- [x] 3.2 `search/reindex.py` with `--init`, `--rebuild` and `--reconcile`. Reconcile compares
       registry ready documents with the card ids in the index (S4), and rebuild ends with
       reconcile. Tests:
       - after an outage of 3 documents, reconcile indexes all 3, and a second run makes 0 writes;
@@ -146,7 +146,7 @@ a second branch would need its own ADR. If the session budget runs out, the rest
 
 ## 4. Search
 
-- [ ] 4.1 `search/search.py` with `select_documents(allowed_ids, query, mode="hybrid",
+- [x] 4.1 `search/search.py` with `select_documents(allowed_ids, query, mode="hybrid",
       workspace_id=None)` and `retrieve_chunks(doc_ids, query, k, mode="hybrid")`: RRF k=60, RFA
       `pool_size`, and a registry recheck through `_user_can_see` (S4, S5). One call runs the
       pipeline: select first, then retrieve inside the selected documents; `lexical` drops the
@@ -170,7 +170,7 @@ a second branch would need its own ADR. If the session budget runs out, the rest
       - skip its per-document top-up of crowded-out documents ("добор внутри вытесненных"): that
         retrieval policy is not in this plan. Revisit if answers over many documents keep missing
         one source.
-- [ ] 4.2 The answer-size heuristic (S9): a pure classifier of the query string, with the 3/8
+- [x] 4.2 The answer-size heuristic (S9): a pure classifier of the query string, with the 3/8
       bounds as starting values. Tests:
       - «что пишут о рисках» → the broad size;
       - «чистая прибыль 2024» and «рентабельность капитала, %» → the specific size;
@@ -179,7 +179,7 @@ a second branch would need its own ADR. If the session budget runs out, the rest
 
 ## 5. Tool
 
-- [ ] 5.1 `assistant/search_tool.py`, `ouro_view.search_hits` and `Refusal.SEARCH_DOWN`, wired as
+- [x] 5.1 `assistant/search_tool.py`, `ouro_view.search_hits` and `Refusal.SEARCH_DOWN`, wired as
       follows:
       - `ToolApi` tuple;
       - `tool_names.py`;
@@ -205,7 +205,7 @@ a second branch would need its own ADR. If the session budget runs out, the rest
 
       Verify: `test_dev_config.py` and `test_schema_budget.py` are green, and the measured
       `budget_chars` is recorded in the ADR.
-- [ ] 5.2 In `skills/aifa-planning/SKILL.md`, say when to use `aifa_search` (qualitative and
+- [x] 5.2 In `skills/aifa-planning/SKILL.md`, say when to use `aifa_search` (qualitative and
       cross-document passages) and when to use `aifa_doc` (exact pages); add that the search is
       always two-stage, when to pass `mode="lexical"` (exact terms and figures, or after the
       refusal naming it), that a broad query gets more chunks and a metrics query fewer unless
@@ -215,8 +215,8 @@ a second branch would need its own ADR. If the session budget runs out, the rest
 
 ## 6. Verification and handover
 
-- [ ] 6.1 Run `aifa/scripts/check.sh` and paste the result, comparing with the baseline.
-- [ ] 6.2 Get an independent `/code-review` in a clean context, citing file:line. It checks
+- [x] 6.1 Run `aifa/scripts/check.sh` and paste the result, comparing with the baseline.
+- [x] 6.2 Get an independent `/code-review` in a clean context, citing file:line. It checks
       `docs/INVARIANTS.md` for `skills/aifa-*`. Verify: no open blockers.
 - [ ] 6.3 On aifa-sym, at the owner's signal: check free disk and memory first, then deploy, run
       `reindex --init` and `--reconcile`, and enable the tool. Verify:
@@ -224,5 +224,5 @@ a second branch would need its own ADR. If the session budget runs out, the rest
       - RFA `test_benchmark/long_table_recall.py`, run against our index on the same corpus
         documents, with the recall recorded in `PROGRESS.md` §3 next to RFA's figure;
       - a live question across two reports gets an answer citing pages from `aifa_search`.
-- [ ] 6.4 Add `PROGRESS.md` §1/§3/§4 entries, including the image tag and its digest (ADR-0035),
+- [x] 6.4 Add `PROGRESS.md` §1/§3/§4 entries, including the image tag and its digest (ADR-0035),
       and run `graphify update .`.

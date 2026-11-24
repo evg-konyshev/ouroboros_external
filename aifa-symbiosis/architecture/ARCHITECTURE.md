@@ -148,6 +148,7 @@ C4Container
   System_Ext(caddy, "finengine-caddy-1", "общий с prod, не трогать")
   System_Ext(cloudru, "Cloud.ru")
   System_Ext(infproxy, "infproxy")
+  System_Ext(embed, "Провайдер эмбеддингов", "GigaChat или OpenRouter (ADR-0102)")
   System_Boundary(sym, "aifa-sym") {
     Container(frontend, "Фронтенд", "Next.js 16", "экран AIFA без изменений")
     Container(engine, "Служба движка", "FastAPI, Python 3.12, окружение finengine", "вход, ручки, журнал хода, конвейер, Case, проверки, внутренний API инструментов")
@@ -156,6 +157,7 @@ C4Container
     ContainerDb(ourodb, "База ouroboros", "PostgreSQL", "задачи, сообщения, каталог, настройки")
     ContainerDb(s3, "S3", "MinIO", "байты файлов каталога")
     Container(ws, "Workstation контура", "workstation-svc + слой комнаты", "сессии ouroboros и разовые комнаты службы, без сети")
+    ContainerDb(search, "OpenSearch", "2.x, один узел", "проекция поиска: карточки и чанки документов, пересобираемая (ADR-0102)")
   }
   Rel(analyst, caddy, "HTTPS")
   Rel(caddy, frontend, "HTTP")
@@ -169,6 +171,8 @@ C4Container
   Rel(ouro, s3, "S3 API")
   Rel(ouro, cloudru, "модель агента main")
   Rel(engine, infproxy, "модели извлечения")
+  Rel(engine, search, "индексация, поиск", "HTTP, FINENGINE_OPENSEARCH_URL")
+  Rel(engine, embed, "эмбеддинги")
 ```
 
 Где поднимать PostgreSQL и S3 на dev (новые контейнеры или новые базы в имеющихся) — открытый
@@ -194,6 +198,7 @@ C4Component
     Component(room, "sealed_room", "есть, + заголовки", "разовая комната Workstation")
     Component(files, "doc_store", "переделка + workspace_id", "doc_id и file_id, распознавание, отказ XLS/DOC, workspace документа")
     Component(llm, "llm", "есть", "модели извлечения")
+    Component(search, "search", "новый", "индексация, выбор документов, чанки, деградированный поиск, reconcile (ADR-0102)")
   }
   ContainerDb(db, "База службы", "PostgreSQL")
   Container_Ext(ouro, "ouroboros")
@@ -210,6 +215,8 @@ C4Component
   Rel(toolapi, subtasks, "aifa_wait task_id")
   Rel(turn, subtasks, "кадр итога подзадачи")
   Rel(toolapi, files, "aifa_doc: распознанный текст")
+  Rel(toolapi, search, "aifa_search")
+  Rel(files, search, "индексация после распознавания, удаление")
   Rel(toolapi, view, "текст ответа")
   Rel(loop, pipeline, "шаги, сценарии по коду из частей цели агента")
   Rel(atoms, room, "проверка кода")

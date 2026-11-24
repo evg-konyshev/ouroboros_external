@@ -4,6 +4,8 @@ from typing import Literal
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+EMBEDDING_PROVIDERS = frozenset({"gigachat", "openrouter"})
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_prefix="FINENGINE_", extra="ignore")
@@ -17,6 +19,11 @@ class Settings(BaseSettings):
 
     chunk_size: int = 800
     chunk_overlap: int = 100
+
+    opensearch_url: str = ""
+    embedding_provider: Literal["gigachat", "openrouter"] = "gigachat"
+    embedding_model: str = "Embeddings"
+    embedding_batch_size: int = Field(default=32, gt=0)
 
     claude_model: str = "claude-opus-4-6"
 

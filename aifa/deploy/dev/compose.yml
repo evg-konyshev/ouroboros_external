@@ -30,6 +30,7 @@ services:
       OUROBOROS_ENV: production
       OUROBOROS_DATA_DIR: /data
       OUROBOROS_SERVER_HOST: 0.0.0.0
+      OUROBOROS_INITIAL_EXTENSION_SCHEMA_BUDGET: "10000"
     ports:
       # ADR-0028: порт ouroboros наружу не публикуется; loopback — только для /ready.
       # 18180: на хосте старая копия ouroboros держит 127.0.0.1:8080 и 18800.
@@ -146,6 +147,18 @@ services:
     networks: [internal]
 
   # Ниже — профиль `app`: поднимается с шага 12, а не вместе с контуром ouroboros.
+  opensearch:
+    profiles: [app]
+    image: opensearchproject/opensearch:2.19.2
+    restart: unless-stopped
+    environment:
+      discovery.type: single-node
+      DISABLE_SECURITY_PLUGIN: "true"
+      OPENSEARCH_JAVA_OPTS: "-Xms1g -Xmx1g"
+    volumes:
+      - os-data:/usr/share/opensearch/data
+    networks: [internal]
+
   engine:
     profiles: [app]
     build:
@@ -158,6 +171,8 @@ services:
     env_file:
       - path: engine.env
         required: false
+    environment:
+      FINENGINE_OPENSEARCH_URL: http://opensearch:9200
     volumes:
       - engine-data:/app/data
     depends_on:
@@ -243,3 +258,5 @@ volumes:
     name: aifa-sym-engine-data
   engine-pgdata:
     name: aifa-sym-engine-pgdata
+  os-data:
+    name: aifa-sym-os-data

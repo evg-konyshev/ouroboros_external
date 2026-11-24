@@ -9,12 +9,13 @@ from aifa_engine_support import SNAPSHOT, Registered, registered_tools, schema_c
 
 from ouroboros.storage.settings.schema import AppSettings
 
-TARGET_CHARS = 7000
+TARGET_CHARS = 9000
 EXPECTED_TOOLS = {
     "aifa_open",
     "aifa_wait",
     "aifa_state",
     "aifa_doc",
+    "aifa_search",
     "aifa_atoms",
     "aifa_move",
     "aifa_register_atom",
@@ -36,16 +37,19 @@ def _shape(tool: Registered) -> dict[str, Any]:
 
 
 def test_the_plugin_registers_exactly_the_tools_this_step_owns() -> None:
-    """F4: набор инструментов — девять (шаги 10, 13 и 16, ADR-0064)."""
+    """F4: набор инструментов — десять (ADR-0042, ADR-0064, ADR-0102)."""
     assert set(registered_tools()) == EXPECTED_TOOLS
 
 
 def test_the_schemas_fit_the_first_request_budget_with_room_to_spare() -> None:
-    """F4: сумма знаков схем в пределах цели 7000 и строго меньше предела ядра."""
+    """F4: цель 9000, предел dev из снимка 10000; умолчание ядра остаётся 8000."""
     total = sum(schema_chars(tool) for tool in registered_tools().values())
-    limit = AppSettings.model_fields["OUROBOROS_INITIAL_EXTENSION_SCHEMA_BUDGET"].default
+    deployed = json.loads(SNAPSHOT.with_name("dev_config.snapshot.json").read_text(encoding="utf-8"))
+    limit = int(deployed["required"]["OUROBOROS_INITIAL_EXTENSION_SCHEMA_BUDGET"])
+    core_default = AppSettings.model_fields["OUROBOROS_INITIAL_EXTENSION_SCHEMA_BUDGET"].default
 
-    assert limit == 8000, "предел ядра изменился — перечитай ADR-0022 п. 5"
+    assert core_default == 8000, "предел ядра изменился — перечитай ADR-0102"
+    assert limit == 10000
     assert total <= TARGET_CHARS < limit
 
 

@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Callable
 from typing import Any
 
 from sqlalchemy import (
@@ -48,6 +49,11 @@ from finengine.store.workspaces import WorkspaceStore
 
 log = logging.getLogger(__name__)
 
+
+class DocumentChangedDuringIndexing(RuntimeError):
+    pass
+
+
 _metadata = MetaData()
 
 DOCUMENT = Table(
@@ -55,6 +61,7 @@ DOCUMENT = Table(
     Column("doc_id", String(64), primary_key=True),
     Column("owner_id", Integer, nullable=False, default=0, index=True),
     Column("workspace_id", String(64), nullable=True, index=True),
+    Column("index_state", String(256), nullable=True),
     Column("meta", JSON, nullable=False),
 )
 
@@ -93,6 +100,7 @@ class SqlDocumentStore:
         _metadata.create_all(self._engine)
         # workspace_id добавлен позже: legacy-таблицы без колонки — обновить.
         self._ensure_workspace_column()
+        self._ensure_index_state_column()
         # workspace создаётся той же базой; используем уже собранный движок.
         self._workspaces = WorkspaceStore(self._engine)
 
@@ -113,6 +121,17 @@ class SqlDocumentStore:
                 indexes = {index["name"] for index in inspector.get_indexes("document")}
                 if "ix_document_workspace_id" not in indexes:
                     conn.execute(text("CREATE INDEX ix_document_workspace_id ON document(workspace_id)"))
+
+    def _ensure_index_state_column(self) -> None:
+        with self._engine.begin() as conn:
+            if conn.dialect.name == "postgresql":
+                conn.execute(
+                    text("ALTER TABLE document ADD COLUMN IF NOT EXISTS index_state VARCHAR(256)")
+                )
+                return
+            columns = {column["name"] for column in inspect(conn).get_columns("document")}
+            if "index_state" not in columns:
+                conn.execute(text("ALTER TABLE document ADD COLUMN index_state VARCHAR(256)"))
 
     def _default_workspace(self, owner_id: int) -> str:
         ws_id = f"owner:{owner_id}"
@@ -291,6 +310,39 @@ class SqlDocumentStore:
             conn.execute(DOCUMENT.update().where(DOCUMENT.c.doc_id == meta.doc_id).values(
                 owner_id=owner_id,
                 meta=json.loads(meta.model_dump_json())))
+
+    def set_index_state(self, doc_id: str, state: str) -> bool:
+        with self._engine.begin() as conn:
+            result = conn.execute(
+                DOCUMENT.update()
+                .where(DOCUMENT.c.doc_id == doc_id)
+                .values(index_state=state[:256])
+            )
+            return bool(result.rowcount)
+
+    def publish_search_projection(self, expected: DocumentMeta, publish: Callable[[], None]) -> bool:
+        with self._engine.begin() as conn:
+            # Параллельные загрузка и сверка не должны перемешать записи одного документа.
+            document = DOCUMENT.c.doc_id == expected.doc_id
+            query = select(DOCUMENT.c.meta, DOCUMENT.c.workspace_id).where(document).with_for_update()
+            row = conn.execute(query).one_or_none()
+            if row is None:
+                return False
+            if _to_meta(row[0], row[1]) != expected:
+                raise DocumentChangedDuringIndexing
+            publish()
+            conn.execute(DOCUMENT.update().where(document).values(index_state="indexed"))
+            return True
+
+    def failed_index_document_ids(self) -> set[str]:
+        with self._engine.begin() as conn:
+            return set(conn.scalars(select(DOCUMENT.c.doc_id).where(DOCUMENT.c.index_state.like("failed:%"))))
+
+    def get_index_state(self, doc_id: str) -> str | None:
+        with self._engine.begin() as conn:
+            return conn.execute(
+                select(DOCUMENT.c.index_state).where(DOCUMENT.c.doc_id == doc_id)
+            ).scalar_one_or_none()
 
     @property
     def total_chunks(self) -> int:

@@ -100,6 +100,21 @@ TOOLS = (
         capability_class="read_only",
     ),
     Tool(
+        name="aifa_search",
+        description="Двухстадийный поиск по документам хода: сначала выбор документов, затем фрагменты со страницами.",
+        schema={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string"},
+                "doc_ids": {"type": "array", "items": {"type": "string"}},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 10},
+                "mode": {"type": "string", "enum": ["hybrid", "lexical"]},
+            },
+            "required": ["query"],
+        },
+        capability_class="read_only",
+    ),
+    Tool(
         name="aifa_atoms",
         description=(
             "Каталог атомов. list — карточки без кода; get — контракт, версия и исходный код одного атома; "
