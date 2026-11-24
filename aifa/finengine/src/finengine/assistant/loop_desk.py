@@ -94,7 +94,7 @@ class LoopDesk:
         self, run_id: str, user_id: int | str, emitter: LoopEmitter, session: LoopSession, origin: LoopOrigin,
         *, doc_id: str | None = None,
     ) -> None:
-        self._sweep()
+        self._sweep(user_id)
         session.event_sink.target = emitter  # type: ignore[attr-defined]  # SwitchSink from the loop opener
         session.is_cancelled = RunClosed(run_id)
         deadline = None
@@ -105,26 +105,30 @@ class LoopDesk:
                 deadline = opened_at + session.limits.max_wall_seconds
             else:
                 session.limits = replace(session.limits, max_wall_seconds=max(0.0, deadline - opened_at))
-        self._open[self.loop_key(run_id, doc_id)] = OpenLoop(run_id, session, origin, user_id, doc_id)
-        session.market_checkpoint = lambda: self.save(run_id, doc_id)
-        self.save(run_id, doc_id)
         if doc_id is not None and deadline is not None:
             self._index_report(run_id, user_id, doc_id, deadline)
+        opened = OpenLoop(run_id, session, origin, user_id, doc_id)
+        self._save_loop(opened)
+        self._open[self.loop_key(run_id, doc_id)] = opened
+        session.market_checkpoint = lambda: self.save(run_id, doc_id)
 
     @staticmethod
     def report_ids(run_id: str, user_id: int | str) -> tuple[str, ...]:
         index = state.get(state.LOOP_INDEX, owner=user_id, key=run_id) or {}
-        return tuple(index.get("doc_ids", ()))
+        return tuple(
+            doc_id for doc_id in index.get("doc_ids", ())
+            if state.get(state.LOOP_SESSION, owner=user_id, key=LoopDesk.loop_key(run_id, doc_id)) is not None
+        )
 
     @staticmethod
     def reports_closed(run_id: str, user_id: int | str) -> bool:
         index = state.get(state.LOOP_INDEX, owner=user_id, key=run_id) or {}
-        return bool(index.get("closed"))
+        return bool(index.get("closed") or index.get("finishing"))
 
     @staticmethod
     def report_deadline(run_id: str, user_id: int | str) -> float | None:
         index = state.get(state.LOOP_INDEX, owner=user_id, key=run_id) or {}
-        return index.get("deadline")
+        return index.get("deadline") if LoopDesk.report_ids(run_id, user_id) else None
 
     async def deadline_of(self, call: BoundCall) -> float | None:
         async with self._restoring:
@@ -154,7 +158,7 @@ class LoopDesk:
             изменить=lambda current: {
                 **(current or {}),
                 "doc_ids": list(dict.fromkeys([*(current or {}).get("doc_ids", ()), doc_id])),
-                "deadline": (current or {}).get("deadline", deadline),
+                "deadline": deadline,
             },
         )
 
@@ -183,39 +187,52 @@ class LoopDesk:
             return found
 
     def save(self, run_id: str, doc_id: str | None = None) -> None:
-        key = self.loop_key(run_id, doc_id)
-        loop = self._open[key]
+        self._save_loop(self._open[self.loop_key(run_id, doc_id)])
+
+    def _save_loop(self, loop: OpenLoop) -> None:
         state.put(
-            state.LOOP_SESSION, owner=loop.user_id, key=key,
+            state.LOOP_SESSION, owner=loop.user_id, key=self.loop_key(loop.run_id, loop.doc_id),
             doc={"origin": loop.origin.to_doc(), "state": state_of(loop.session)},
         )
 
-    def close_turn(self, first: OpenLoop, report_ids: tuple[str, ...]) -> tuple[str, ...]:
-        run_id, user_id = first.run_id, first.user_id
-        if not report_ids:
-            self.save(run_id)
-            return ()
-        filenames = []
+    def report_names(self, run_id: str, user_id: int | str, report_ids: tuple[str, ...]) -> tuple[str, ...]:
+        return tuple(
+            (saved.get("origin", {}).get("filename") or doc_id)
+            for doc_id in report_ids
+            for saved in (state.get(state.LOOP_SESSION, owner=user_id, key=self.loop_key(run_id, doc_id)) or {},)
+        )
+
+    @staticmethod
+    def pending_finish(run_id: str, user_id: int | str) -> dict[str, Any] | None:
+        index = state.get(state.LOOP_INDEX, owner=user_id, key=run_id) or {}
+        return index.get("finishing")
+
+    @staticmethod
+    def stage_finish(run_id: str, user_id: int | str, result: dict[str, Any]) -> None:
+        state.mutate(
+            state.LOOP_INDEX, owner=user_id, key=run_id,
+            изменить=lambda index: {**(index or {}), "finishing": result},
+        )
+
+    def close_reports(self, run_id: str, user_id: int | str, report_ids: tuple[str, ...]) -> None:
         for doc_id in report_ids:
             loop = self.live(run_id, doc_id)
             if loop is not None:
                 loop.session.closed = True
                 self.save(run_id, doc_id)
-                filename = loop.origin.filename
             else:
                 key = self.loop_key(run_id, doc_id)
                 saved = state.get(state.LOOP_SESSION, owner=user_id, key=key)
-                filename = ""
                 if saved is not None:
-                    filename = saved["origin"].get("filename", "")
                     saved["state"]["closed"] = True
                     state.put(state.LOOP_SESSION, owner=user_id, key=key, doc=saved)
-            filenames.append(filename or doc_id)
+
+    @staticmethod
+    def finish_committed(run_id: str, user_id: int | str) -> None:
         state.mutate(
             state.LOOP_INDEX, owner=user_id, key=run_id,
-            изменить=lambda index: {**(index or {}), "closed": True},
+            изменить=lambda index: {**(index or {}), "closed": True, "finishing": None},
         )
-        return tuple(filenames)
 
     async def _restore(self, run_id: str, user_id: int | str, doc_id: str | None = None) -> OpenLoop | None:
         key = self.loop_key(run_id, doc_id)
@@ -242,14 +259,17 @@ class LoopDesk:
         session.market_checkpoint = lambda: self.save(run_id, doc_id)
         return restored
 
-    def _sweep(self) -> None:
+    def _sweep(self, owner: int | str | None = None) -> None:
         """Забыть циклы закончившихся ходов — и в памяти, и в хранилище; без этого они копились бы."""
         snapshot = tuple(self._open.items())
         runs = {(loop.run_id, loop.user_id) for _, loop in snapshot}
+        if owner is not None:
+            runs.update((run_id, owner) for run_id in state.keys(state.LOOP_INDEX, owner=owner))
         for run_id, user_id in runs:
             if not run_is_active(run_id):
                 keys = {key for key, loop in snapshot if loop.run_id == run_id}
-                keys.update(self.loop_key(run_id, doc_id) for doc_id in self.report_ids(run_id, user_id))
+                index = state.get(state.LOOP_INDEX, owner=user_id, key=run_id) or {}
+                keys.update(self.loop_key(run_id, doc_id) for doc_id in index.get("doc_ids", ()))
                 for key in keys | {run_id}:
                     self._open.pop(key, None)
                     state.delete_one(state.LOOP_SESSION, owner=user_id, key=key)

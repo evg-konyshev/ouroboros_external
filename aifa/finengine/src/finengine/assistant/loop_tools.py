@@ -17,6 +17,7 @@ from finengine.assistant.subtask_waits import SubtaskWaits
 from finengine.assistant.tool_call import BoundCall
 from finengine.config import settings
 from finengine.ingestion.document_store import get_store
+from finengine.skills.run_orchestrator import emit_to_run
 from finengine.skills.production_runtime import publish_result
 from finengine.skills.spec.dynamic_run import Rejection, decision_from_data
 
@@ -60,13 +61,6 @@ class ExclusiveTool:
         self._desk = desk
 
     async def run(self, call: BoundCall) -> str:
-        loop = await self._desk.open_loop_of(call) if self.finish_turn else await document_loop(self._desk, call)
-        if isinstance(loop, str):
-            return loop
-        if self.finish_turn and loop is None:
-            loop = next(iter(await self._desk.loops_of(call)), None)
-        if loop is None:
-            return no_loop()
         operation = None
         if call.ctx.operation_id:
             try:
@@ -81,15 +75,15 @@ class ExclusiveTool:
                     job = self._board.start(call.ctx.run_id, self.name, operation.wait(), job_id=operation.job_id)
                 return await reply_of(self._board, job, settings.ouroboros_goal_wait_sec)
         job = self._board.start(
-            call.ctx.run_id, self.name, self._queued(loop, call, operation),
+            call.ctx.run_id, self.name, self._queued(call, operation),
             job_id=operation.job_id if operation else None,
         )
         return await reply_of(self._board, job, settings.ouroboros_goal_wait_sec)
 
-    async def _queued(self, loop: OpenLoop, call: BoundCall, operation: Operation | None = None) -> str:
-        async with self._desk.queue_of(loop.run_id):
+    async def _queued(self, call: BoundCall, operation: Operation | None = None) -> str:
+        async with self._desk.queue_of(call.ctx.run_id):
             try:
-                text = await self._execute_in_queue(loop, call)
+                text = await self._resolve_and_execute(call)
             except Exception as exc:
                 # Без записи итога повтор этого operation_id ждал бы результат, которого не будет.
                 if operation is not None:
@@ -98,6 +92,20 @@ class ExclusiveTool:
             if operation is not None:
                 await asyncio.to_thread(operation.finish, text)
             return text
+
+    async def _resolve_and_execute(self, call: BoundCall) -> str:
+        if not self.finish_turn and await asyncio.to_thread(
+            self._desk.reports_closed, call.ctx.run_id, call.record.user_id,
+        ):
+            return ouro_view.refusal(Refusal.LOOP_CLOSED, "Циклы закрыты aifa_finish.")
+        loop = await self._desk.open_loop_of(call) if self.finish_turn else await document_loop(self._desk, call)
+        if isinstance(loop, str):
+            return loop
+        if self.finish_turn and loop is None:
+            loop = next(iter(await self._desk.loops_of(call)), None)
+        if loop is None:
+            return no_loop()
+        return await self._execute_in_queue(loop, call)
 
     async def _execute_in_queue(self, loop: OpenLoop, call: BoundCall) -> str:
         return await asyncio.to_thread(self._execute_live, loop, call.args)
@@ -162,11 +170,28 @@ class FinishTool(ExclusiveTool):
         super().__init__(board, desk)
         self._subtasks = subtasks
 
+    async def _resolve_and_execute(self, call: BoundCall) -> str:
+        run_id, user_id = call.ctx.run_id, call.record.user_id
+        pending = await asyncio.to_thread(self._desk.pending_finish, run_id, user_id)
+        if pending is not None:
+            return await self._publish_staged(run_id, user_id, pending)
+        return await super()._resolve_and_execute(call)
+
     async def _execute_in_queue(self, loop: OpenLoop, call: BoundCall) -> str:
         report_ids = await self._desk.report_ids_of(call)
-        return await asyncio.to_thread(self._finish, loop, call.args, report_ids)
+        result = await asyncio.to_thread(self._finish, loop, call.args, report_ids)
+        if isinstance(result, str):
+            return result
+        return await self._publish_staged(loop.run_id, loop.user_id, result)
 
-    def _finish(self, loop: OpenLoop, args: dict[str, Any], report_ids: tuple[str, ...]) -> str:
+    async def _publish_staged(self, run_id: str, user_id: int | str, result: dict[str, Any]) -> str:
+        await asyncio.to_thread(self._desk.close_reports, run_id, user_id, tuple(result["doc_ids"]))
+        for number, event in enumerate(result["events"]):
+            emit_to_run(run_id, event, event_key=f"aifa_finish:{number}")
+        await asyncio.to_thread(self._desk.finish_committed, run_id, user_id)
+        return str(result["reply"])
+
+    def _finish(self, loop: OpenLoop, args: dict[str, Any], report_ids: tuple[str, ...]) -> str | dict[str, Any]:
         session = loop.session
         if session.closed:
             return ouro_view.refusal(Refusal.LOOP_CLOSED, "Цикл уже закрыт: aifa_finish принят раньше.")
@@ -184,16 +209,34 @@ class FinishTool(ExclusiveTool):
         checked = session.check(decision, last_word=last_word)
         if isinstance(checked, Rejection) and not last_word:
             return self._rejected(loop, checked)
-        # Последнее слово не принято: цикл конечен — закрывается сводкой и показывает найденное, как у цикла службы.
-        if isinstance(checked, Rejection):
-            result, refused = session.stopped(checked), str(checked)
-        else:
-            result, refused = session.finish(checked), ""
-        filenames = self._desk.close_turn(loop, report_ids)
-        publish_result(
-            result, session.event_sink, case_id=session.case_id, document_id=loop.origin.document_id or "",
-            document_ids=report_ids,
-        )
-        return ouro_view.accepted(
-            result, reason=refused, unfinished=self._subtasks.unfinished(loop.run_id), filenames=filenames,
-        )
+        sink = session.event_sink
+        events: list[dict[str, Any]] = []
+        if report_ids:
+            session.event_sink = events.append
+        rejected = session.rejected
+        try:
+            if isinstance(checked, Rejection):
+                result, refused = session.stopped(checked), str(checked)
+            else:
+                result, refused = session.finish(checked), ""
+            filenames = self._desk.report_names(loop.run_id, loop.user_id, report_ids)
+            reply = ouro_view.accepted(
+                result, reason=refused, unfinished=self._subtasks.unfinished(loop.run_id), filenames=filenames,
+            )
+            if not report_ids:
+                self._desk.save(loop.run_id)
+            publish_result(
+                result, session.event_sink, case_id=session.case_id, document_id=loop.origin.document_id or "",
+                document_ids=report_ids,
+            )
+            if not report_ids:
+                return reply
+            pending = {"doc_ids": list(report_ids), "reply": reply, "events": events}
+            self._desk.stage_finish(loop.run_id, loop.user_id, pending)
+            return pending
+        except Exception:
+            session.closed = False
+            session.rejected = rejected
+            raise
+        finally:
+            session.event_sink = sink

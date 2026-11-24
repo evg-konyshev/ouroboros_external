@@ -18,6 +18,7 @@ from finengine.assistant.events import Event
 from finengine.assistant.jobs import Job, JobBoard, RunEnded
 from finengine.assistant.loop_desk import MAX_REPORT_LOOPS, LoopDesk
 from finengine.assistant.loop_opening import NoDocument, gate_document, no_document
+from finengine.ingestion.document_store import get_store
 from finengine.assistant.ouro_view import Refusal
 from finengine.assistant.subtask_waits import SubtaskWaits, Verdict
 from finengine.assistant.tool_call import BoundCall
@@ -32,6 +33,10 @@ WAIT_MAX_SEC = 240
 OPEN_KIND = "aifa_open"
 MARKET_OPEN_KIND = f"{OPEN_KIND}:mode:market"
 BEFORE_OPEN = "Сначала вызови aifa_open: чтение доступно после него."
+
+
+def _document_present(doc_id: str) -> bool:
+    return get_store().get_document(doc_id) is not None
 
 
 class Opening(Protocol):
@@ -97,7 +102,7 @@ class OpenTool:
         kind = MARKET_OPEN_KIND if mode == "market" else (
             f"{OPEN_KIND}:{doc_id}" if problem is None else OPEN_KIND
         )
-        job = self._board.of_kind(run_id, kind) if problem is None else None
+        job = self._board.of_kind(run_id, kind, pending=True) if problem is None else None
         if job is None:
             job = self._board.start(run_id, kind, self._queued_answer(call, doc_id, problem))
         return await reply_of(self._board, job, settings.ouroboros_goal_wait_sec)
@@ -126,6 +131,8 @@ class OpenTool:
             if loop is not None:
                 if loop.origin.mode != mode:
                     return ouro_view.refusal(Refusal.BAD_ARGUMENTS, "Режим уже открытого цикла менять нельзя")
+                if doc_id is not None and not await asyncio.to_thread(_document_present, doc_id):
+                    return ouro_view.refusal(Refusal.NO_DOCUMENT, "Документ отсутствует в ходе или удалён.")
                 return ouro_view.opened(loop.session, limit=settings.ouroboros_result_limit)
             if doc_id is not None:
                 opened = await asyncio.to_thread(self._desk.report_ids, run_id, call.record.user_id)

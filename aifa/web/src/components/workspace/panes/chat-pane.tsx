@@ -13,7 +13,7 @@ import { stripGfmTables } from "@/lib/gfm-tables";
 import { thinkingLines } from "@/lib/thinking-lines";
 import { activeStepOf } from "@/lib/active-step";
 import remarkGfm from "remark-gfm";
-import { projectSourceDownloadUrl } from "@/lib/api";
+import { listDocuments, projectSourceDownloadUrl, type DocumentSummary } from "@/lib/api";
 import { rowsFromExtraction, typedResultId } from "@/lib/projects";
 import type { Beat, ExtractionMessage, Project, TextMessage } from "@/lib/projects";
 import { interruptedNotice, type InterruptedState } from "@/lib/run-recovery";
@@ -88,9 +88,22 @@ export function ChatPane({
     return () => setChatRun(null);
   }, [setChatRun, run.streaming, run.send]);
   const messages = useMemo(() => live?.messages ?? [], [live?.messages]);
+  const [folderFiles, setFolderFiles] = useState<DocumentSummary[]>([]);
+  const needsFolderFiles = messages.some((message) => message.role === "assistant" &&
+    message.turnDocumentIds?.some((id) => !ws?.docs.some((doc) => doc.doc_id === id) &&
+      !folderFiles.some((doc) => doc.doc_id === id)));
+  useEffect(() => {
+    if (!needsFolderFiles) return;
+    let active = true;
+    void listDocuments().then((files) => {
+      if (active) setFolderFiles(files);
+    }).catch(() => {});
+    return () => { active = false; };
+  }, [live?.id, needsFolderFiles]);
 
   const [draft, setDraft] = useState("");
-  const [folderScope, setFolderScope] = useState(false);
+  const [scopeChatId, setScopeChatId] = useState<string | null>(null);
+  const folderScope = !!live && scopeChatId === live.id;
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const atBottomRef = useRef(true);
   // Прикрепление файла из композера («+»): загрузка и статус живут в use-doc-upload,
@@ -225,6 +238,7 @@ export function ChatPane({
               <AssistantRow
                 key={m.id}
                 message={m}
+                docs={folderFiles.length ? folderFiles : ws?.docs}
                 projectId={live?.id ?? ""}
                 // Ход ЖИВ — это состояние ПРОГОНА, а не подписки и не текста
                 // (жалобы Nate 19.08 п.4-6 и 31.08). При обрыве SSE сторож
@@ -284,7 +298,8 @@ export function ChatPane({
             <input
               type="checkbox"
               checked={folderScope}
-              onChange={(event) => setFolderScope(event.target.checked)}
+              disabled={!live}
+              onChange={(event) => setScopeChatId(event.target.checked ? live?.id ?? null : null)}
             />
             Все документы папки
           </label>
@@ -520,6 +535,7 @@ function UserRow({ message }: { message: TextMessage }) {
 
 function AssistantRow({
   message,
+  docs,
   projectId,
   extraction,
   streaming,
@@ -528,6 +544,7 @@ function AssistantRow({
   onReconnect,
 }: {
   message: TextMessage;
+  docs?: DocumentSummary[];
   projectId: string;
   /** Ход этого сообщения ИДЁТ ПРЯМО СЕЙЧАС. */
   streaming?: boolean;
@@ -540,7 +557,6 @@ function AssistantRow({
   /** Прогон жив — догнать его ответ, НЕ запуская второй ход. */
   onReconnect: () => void;
 }) {
-  const docs = useWorkspaceSafe()?.docs;
   const hasFiles = (message.files?.length ?? 0) > 0;
   const hasTypedResults = (message.typedResults?.length ?? 0) > 0;
   const answerLayout = assistantAnswerLayout(message, Boolean(streaming));

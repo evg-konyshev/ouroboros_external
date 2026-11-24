@@ -135,17 +135,22 @@ class RunState:
         self.finished_at: float | None = None
         self.error: str | None = None
         self.seq: int = 0
+        self._sent_event_keys: set[str] = set()
 
-    def emit(self, event: dict) -> None:
+    def emit(self, event: dict, *, event_key: str = "") -> None:
         """Журнал + память + локальные наблюдатели + шина.
 
         Номер события присваивается ЗДЕСЬ и только здесь: он же уходит в шину,
         и по нему подписчик на чужой реплике отбрасывает то, что уже прочитал
         из журнала.
         """
+        if event_key and event_key in self._sent_event_keys:
+            return
         self.seq += 1
         self.events.append(event)
         append_event(self.run_id, self.kind, event)
+        if event_key:
+            self._sent_event_keys.add(event_key)
         for q in list(self.observers):
             try:
                 q.put_nowait(event)
@@ -327,7 +332,7 @@ def list_active(kind: str | None = None) -> list[str]:
     ]
 
 
-def emit_to_run(run_id: str, event: dict) -> bool:
+def emit_to_run(run_id: str, event: dict, *, event_key: str = "") -> bool:
     """#98 C3-2: эмит события в живой ран ИЗВНЕ его раннера.
 
     Прогресс-мост: тулы, исполняемые через /internal/tools/call (петля у
@@ -338,7 +343,7 @@ def emit_to_run(run_id: str, event: dict) -> bool:
     if state is not None:
         if state.finished:
             return False
-        state.emit(event)
+        state.emit(event, event_key=event_key)
         return True
 
     # 🔴 ПРОГОН ЧУЖОЙ — ПРОСИМ ВЛАДЕЛЬЦА, А НЕ ПИШЕМ САМИ. Журнал у прогона
@@ -349,7 +354,7 @@ def emit_to_run(run_id: str, event: dict) -> bool:
     запись = состояние_прогона(run_id)
     if запись is None or запись.get("finished"):
         return False
-    _команда(run_id, {"cmd": "emit", "event": event})
+    _команда(run_id, {"cmd": "emit", "event": event, "event_key": event_key})
     return True
 
 
@@ -409,7 +414,7 @@ async def _слушать_команды(state: "RunState") -> None:
             if приказ == "emit" and not state.finished:
                 событие = сообщение.get("event")
                 if isinstance(событие, dict):
-                    state.emit(событие)
+                    state.emit(событие, event_key=сообщение.get("event_key") or "")
             обработчик = state.commands.get(str(приказ))
             if обработчик is not None and not state.finished:
                 обработчик(сообщение)

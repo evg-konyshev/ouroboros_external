@@ -16,7 +16,7 @@ from finengine.config import settings
 from finengine.ingestion.document_store import get_store
 from finengine.search.client import SearchIndex, SearchUnavailable
 from finengine.search.embeddings import EmbeddingGateway, EmbeddingUnavailable
-from finengine.search.search import DocumentSearch, SearchResult
+from finengine.search.search import DocumentSearch, SearchDocumentMissing, SearchResult
 
 
 class SearchPort(Protocol):
@@ -102,6 +102,8 @@ class SearchTool:
                 limit,
                 mode,
             )
+        except SearchDocumentMissing:
+            return ouro_view.refusal(ouro_view.Refusal.NO_DOCUMENT, "Документ отсутствует в ходе или удалён.")
         except EmbeddingUnavailable:
             return ouro_view.refusal(
                 ouro_view.Refusal.SEARCH_DOWN,

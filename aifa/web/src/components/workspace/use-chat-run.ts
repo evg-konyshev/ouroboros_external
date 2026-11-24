@@ -878,7 +878,7 @@ export function useChatRun(
       );
       // Список документов экрана мог ещё не обновиться — имя берём из реестра
       // загрузки, иначе только что приложенный файл не показался бы в пузыре.
-      const attachedNow = docIdsForTurn
+      const attachedNow = (sendOpts?.scope ? [] : docIdsForTurn)
         .filter((id) => !priorDocs.has(id))
         .map((id) => ({
           doc_id: id,
@@ -890,7 +890,7 @@ export function useChatRun(
       // Второй аргумент — ТОЛЬКО что приложенные: раскладку трогает лишь
       // первая отправка документа, дальше обычные сообщения в том же чате
       // не имеют права двигать окна.
-      if (docIdsForTurn.length) {
+      if (!sendOpts?.scope && docIdsForTurn.length) {
         void opts.onTurnDocs?.(docIdsForTurn, attachedNow.map((d) => d.doc_id));
       }
 

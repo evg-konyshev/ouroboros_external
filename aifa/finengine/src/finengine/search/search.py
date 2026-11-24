@@ -50,6 +50,10 @@ class SearchResult:
     degraded: bool
 
 
+class SearchDocumentMissing(LookupError):
+    """An explicitly requested document is gone or no longer visible."""
+
+
 def answer_size(query: str, limit: int | None = None) -> int:
     if limit is not None:
         return limit
@@ -297,11 +301,14 @@ class DocumentSearch:
         mode: str = "hybrid",
     ) -> SearchResult:
         size = answer_size(query, limit)
+        allowed = set(allowed_ids)
+        if doc_ids is not None and any(self._permitted_document(doc_id, allowed) is None for doc_id in doc_ids):
+            raise SearchDocumentMissing
         try:
             selected = (
                 [score.document_id for score in self.select_documents(allowed_ids, query, mode)]
                 if doc_ids is None
-                else [doc_id for doc_id in dict.fromkeys(doc_ids) if doc_id in allowed_ids]
+                else list(dict.fromkeys(doc_ids))
             )
             return SearchResult(self.retrieve_chunks(selected, query, size, mode), degraded=False)
         except (OpenSearchException, SearchUnavailable):

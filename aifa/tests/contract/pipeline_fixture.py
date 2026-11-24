@@ -15,7 +15,6 @@ import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -169,7 +168,9 @@ def install(
     monkeypatch.setattr(config.settings, "data_dir", tmp_path)
     monkeypatch.setattr(config.settings, "redis_url", "")
     if not real_documents:
+        monkeypatch.setattr("finengine.assistant.goal_tools.get_store", lambda: store)
         monkeypatch.setattr("finengine.assistant.loop_opening.get_store", lambda: store)
+        monkeypatch.setattr("finengine.assistant.loop_tools.get_store", lambda: store)
         monkeypatch.setattr(read_tools, "get_store", lambda: store)
         monkeypatch.setattr(read_tools, "document_text_exists", lambda doc_id: doc_id == DOC)
         monkeypatch.setattr(app_main, "get_store", lambda: store)

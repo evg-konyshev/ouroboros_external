@@ -443,3 +443,83 @@ async def test_state_overview_reads_saved_metadata_while_the_turn_queue_is_held(
         assert first_line(named) == "ГОТОВО" and "Реестр показателей" in named.text
     finally:
         await after.close()
+
+
+async def test_queued_move_routes_after_the_second_document_has_opened(registry, monkeypatch):
+    run = turn(doc_ids=(DOC, B), scope="all_workspace")
+    desk = LoopDesk()
+    plugin = Plugin(ToolApi(Gateway(), LoopOpening(desk), desk))
+    ctx = ctx_of(run.run_id, owner_id=str(OWNER), chat_id=CHAT)
+    waiting = asyncio.Event()
+    opened = asyncio.Event()
+    original = LoopOpening.__call__
+
+    async def held(opening, record):
+        if record.active_doc_id == B:
+            waiting.set()
+            await opened.wait()
+        return await original(opening, record)
+
+    monkeypatch.setattr(LoopOpening, "__call__", held)
+    try:
+        assert first_line(await plugin.call("aifa_open", ctx, {"doc_id": DOC})) == "ГОТОВО"
+        second = asyncio.create_task(plugin.call("aifa_open", ctx, {"doc_id": B}))
+        await asyncio.wait_for(waiting.wait(), timeout=2)
+        monkeypatch.setattr(settings, "ouroboros_goal_wait_sec", 0.05)
+        queued = await plugin.call("aifa_move", ctx, MOVE)
+        assert first_line(queued).startswith("ЖДИ job=")
+        opened.set()
+        assert first_line(await second) == "ГОТОВО"
+        job_id = first_line(queued).split("=", 1)[1]
+        reply = await plugin.call("aifa_wait", ctx, {"job_id": job_id, "wait_sec": 2})
+        assert first_line(reply) == "ОТКАЗ неверные_аргументы"
+        assert all(desk.live(run.run_id, doc_id).session.turns == 0 for doc_id in (DOC, B))
+    finally:
+        opened.set()
+        await plugin.close()
+        await run.end()
+
+
+async def test_an_unready_report_can_be_opened_after_ocr_and_refuses_after_deletion(registry, monkeypatch, severstal_text):
+    run = turn(doc_ids=(C,), scope="all_workspace")
+    desk = LoopDesk()
+    plugin = Plugin(ToolApi(Gateway(), LoopOpening(desk), desk))
+    ctx = ctx_of(run.run_id, owner_id=str(OWNER), chat_id=CHAT)
+    try:
+        assert first_line(await plugin.call("aifa_open", ctx)) == "ОТКАЗ нет_документа"
+        monkeypatch.setattr(blobs, "document_text", lambda doc_id, **_: severstal_text)
+        assert first_line(await plugin.call("aifa_open", ctx)) == "ГОТОВО"
+        registry.remove_document(C)
+        assert first_line(await plugin.call("aifa_open", ctx)) == "ОТКАЗ нет_документа"
+        reply = await plugin.call("aifa_search", ctx, {"query": "прибыль", "doc_ids": [C]})
+        assert first_line(reply) == "ОТКАЗ нет_документа"
+    finally:
+        await plugin.close()
+        await run.end()
+
+
+async def test_snapshot_write_failure_does_not_consume_an_open_slot(registry, monkeypatch):
+    run = turn(doc_ids=(DOC, B), scope="all_workspace")
+    desk = LoopDesk()
+    plugin = Plugin(ToolApi(Gateway(), LoopOpening(desk), desk))
+    ctx = ctx_of(run.run_id, owner_id=str(OWNER), chat_id=CHAT)
+    put = state.put
+    failed = False
+
+    def fail_once(kind, *, owner, key, doc):
+        nonlocal failed
+        if kind == state.LOOP_SESSION and key.endswith(f"/{B}") and not failed:
+            failed = True
+            raise OSError("snapshot write interrupted")
+        put(kind, owner=owner, key=key, doc=doc)
+
+    monkeypatch.setattr(state, "put", fail_once)
+    try:
+        assert first_line(await plugin.call("aifa_open", ctx, {"doc_id": DOC})) == "ГОТОВО"
+        assert (await plugin.call("aifa_open", ctx, {"doc_id": B})).status_code == 500
+        assert desk.report_ids(run.run_id, OWNER) == (DOC,)
+        assert first_line(await plugin.call("aifa_open", ctx, {"doc_id": B})) == "ГОТОВО"
+        assert desk.report_ids(run.run_id, OWNER) == (DOC, B)
+    finally:
+        await plugin.close()
+        await run.end()

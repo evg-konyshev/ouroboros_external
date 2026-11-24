@@ -260,3 +260,34 @@ async def test_sweep_deletes_saved_loops_that_were_not_restored_locally(saved_pa
             assert state.get(state.LOOP_SESSION, owner=OWNER, key=f"{run.run_id}/{doc_id}") is None
     finally:
         await after.close()
+
+
+async def test_finish_after_an_interrupted_snapshot_write_publishes_once(saved_pair, monkeypatch):
+    run, plugin, ctx, _, _ = saved_pair
+    put = state.put
+    failed = False
+
+    def fail_once(kind, *, owner, key, doc):
+        nonlocal failed
+        if kind == state.LOOP_SESSION and key.endswith(f"/{SECOND}") and doc["state"]["closed"] and not failed:
+            failed = True
+            raise OSError("closing second snapshot interrupted")
+        put(kind, owner=owner, key=key, doc=doc)
+
+    monkeypatch.setattr(state, "put", fail_once)
+    assert (await plugin.call("aifa_finish", ctx, {"action": "give_up"})).status_code == 500
+    assert state.get(state.LOOP_SESSION, owner=OWNER, key=f"{run.run_id}/{DOC}")["state"]["closed"]
+    assert not state.get(state.LOOP_SESSION, owner=OWNER, key=f"{run.run_id}/{SECOND}")["state"]["closed"]
+
+    restored = LoopDesk()
+    after = Plugin(ToolApi(Gateway(), LoopOpening(restored), restored))
+    try:
+        move = await after.call("aifa_move", ctx, {**MOVE, "doc_id": SECOND})
+        assert first_line(move) == "ОТКАЗ цикл_закрыт"
+        assert first_line(await after.call("aifa_finish", ctx, {"action": "give_up"})) == "ПРИНЯТО"
+        assert first_line(await after.call("aifa_finish", ctx, {"action": "give_up"})) == "ОТКАЗ цикл_закрыт"
+        await run.end()
+        report_frames = [ev for ev in await run.events() if ev["type"] == "turn_documents"]
+        assert report_frames == [{"type": "turn_documents", "document_ids": [DOC, SECOND]}]
+    finally:
+        await after.close()
