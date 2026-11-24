@@ -105,7 +105,9 @@ class OpenTool:
     async def _queued_answer(self, call: BoundCall, doc_id: str | None, problem: str | None) -> str:
         async with self._desk.queue_of(call.ctx.run_id):
             existing = await self._desk.open_loop_of(call)
-            if existing is not None and existing.session.closed:
+            if (existing is not None and existing.session.closed) or await asyncio.to_thread(
+                self._desk.reports_closed, call.ctx.run_id, call.record.user_id,
+            ):
                 return ouro_view.refusal(Refusal.LOOP_CLOSED, "Ход уже завершён aifa_finish.")
             if existing is not None and existing.origin.mode != call.args.get("mode", "report"):
                 return ouro_view.refusal(Refusal.BAD_ARGUMENTS, "Режим уже открытого цикла менять нельзя")

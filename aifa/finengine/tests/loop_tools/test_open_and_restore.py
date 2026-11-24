@@ -25,9 +25,10 @@ from finengine.assistant.loop_desk import LoopDesk
 from finengine.assistant.loop_opening import LoopOpening, NoDocument
 from finengine.assistant.tool_api import ToolApi
 from finengine.config import settings
+from finengine.ingestion.document_store import get_store
 from finengine.models.document import DocumentMeta
 from finengine.skills.spec.dynamic_run import LoopSession
-from finengine.store import state
+from finengine.store import blobs, state
 from finengine.store.documents import SqlDocumentStore
 
 CHAT = "p-lukoil"
@@ -57,10 +58,10 @@ def turn(**changes):
     return open_run(**{**fields, **changes})
 
 
-async def opened(desk: LoopDesk | None = None):
+async def opened(desk: LoopDesk | None = None, **changes):
     """Цикл открыт `aifa_open`; дальше его ведёт клиент-ouroboros."""
     desk = desk or LoopDesk()
-    run = turn()
+    run = turn(**changes)
     plugin = Plugin(ToolApi(Gateway(), LoopOpening(desk), desk))
     ctx = ctx_of(run.run_id, owner_id=str(OWNER), chat_id=CHAT)
     reply = await plugin.call("aifa_open", ctx)
@@ -192,3 +193,70 @@ async def test_agent_loop_uses_the_configured_wall_budget(monkeypatch):
     assert isinstance(session, LoopSession)
     assert session.limits.max_wall_seconds == 2400.0
     await run.end()
+
+
+SECOND = "doc-second"
+
+
+@pytest.fixture
+async def saved_pair(monkeypatch, severstal_text):
+    get_store().add_document(DocumentMeta(doc_id=SECOND, filename="Другой отчёт.pdf", owner_id=OWNER), [])
+    text = {DOC: severstal_text, SECOND: severstal_text + "\nВторой документ."}
+    monkeypatch.setattr(blobs, "document_text", lambda doc_id, **kw: text.get(doc_id))
+    run, plugin, ctx, desk = await opened(doc_ids=(DOC, SECOND), active_doc_id=DOC, scope="all_workspace")
+    try:
+        assert first_line(await plugin.call("aifa_open", ctx, {"doc_id": SECOND})) == "ГОТОВО"
+        yield run, plugin, ctx, desk, text
+    finally:
+        await plugin.close()
+        await run.end()
+
+
+async def test_named_report_loop_survives_a_restart_and_finish_closes_both(saved_pair):
+    run, plugin, ctx, _, _ = saved_pair
+    assert first_line(await plugin.call("aifa_move", ctx, {**MOVE, "doc_id": SECOND})) == "ГОТОВО"
+    restored = LoopDesk()
+    after = Plugin(ToolApi(Gateway(), LoopOpening(restored), restored))
+    try:
+        reply = await after.call("aifa_state", ctx, {"doc_id": SECOND})
+        assert first_line(reply) == "ГОТОВО" and MOVE["objective"] in reply.text
+        assert restored.live(run.run_id, SECOND).session.turns == 1
+        assert first_line(await after.call("aifa_finish", ctx, {"action": "give_up"})) == "ПРИНЯТО"
+        for doc_id in (DOC, SECOND):
+            assert state.get(state.LOOP_SESSION, owner=OWNER, key=f"{run.run_id}/{doc_id}")["state"]["closed"]
+    finally:
+        await after.close()
+
+
+async def test_report_with_missing_text_is_not_restored(saved_pair):
+    run, _, ctx, original, text = saved_pair
+    before = original.live(run.run_id, SECOND).session.runtime.store.active_documents(OWNER, CHAT)
+    del text[SECOND]
+    restored = LoopDesk()
+    after = Plugin(ToolApi(Gateway(), LoopOpening(restored), restored))
+    try:
+        reply = await after.call("aifa_state", ctx, {"doc_id": SECOND})
+        assert first_line(reply) == "ОТКАЗ нет_цикла"
+        assert restored.live(run.run_id, SECOND) is None
+        assert original.live(run.run_id, SECOND).session.runtime.store.active_documents(OWNER, CHAT) == before
+        finished = await after.call("aifa_finish", ctx, {"action": "give_up"})
+        assert first_line(finished) == "ПРИНЯТО" and "Другой отчёт.pdf" in finished.text
+        assert state.get(state.LOOP_SESSION, owner=OWNER, key=f"{run.run_id}/{SECOND}")["state"]["closed"]
+    finally:
+        await after.close()
+
+
+async def test_sweep_deletes_saved_loops_that_were_not_restored_locally(saved_pair):
+    run, _, ctx, _, _ = saved_pair
+    restored = LoopDesk()
+    after = Plugin(ToolApi(Gateway(), LoopOpening(restored), restored))
+    try:
+        assert first_line(await after.call("aifa_state", ctx, {"doc_id": SECOND})) == "ГОТОВО"
+        assert restored.live(run.run_id, DOC) is None
+        await run.end()
+        restored._sweep()
+        assert state.get(state.LOOP_INDEX, owner=OWNER, key=run.run_id) is None
+        for doc_id in (DOC, SECOND):
+            assert state.get(state.LOOP_SESSION, owner=OWNER, key=f"{run.run_id}/{doc_id}") is None
+    finally:
+        await after.close()

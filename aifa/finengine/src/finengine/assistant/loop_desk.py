@@ -107,6 +107,11 @@ class LoopDesk:
         index = state.get(state.LOOP_INDEX, owner=user_id, key=run_id) or {}
         return tuple(index.get("doc_ids", ()))
 
+    @staticmethod
+    def reports_closed(run_id: str, user_id: int | str) -> bool:
+        index = state.get(state.LOOP_INDEX, owner=user_id, key=run_id) or {}
+        return bool(index.get("closed"))
+
     async def report_ids_of(self, call: BoundCall) -> tuple[str, ...]:
         async with self._restoring:
             return await asyncio.to_thread(self.report_ids, call.ctx.run_id, call.record.user_id)
@@ -162,6 +167,33 @@ class LoopDesk:
             doc={"origin": loop.origin.to_doc(), "state": state_of(loop.session)},
         )
 
+    def close_turn(self, first: OpenLoop, report_ids: tuple[str, ...]) -> tuple[str, ...]:
+        run_id, user_id = first.run_id, first.user_id
+        if not report_ids:
+            self.save(run_id)
+            return ()
+        filenames = []
+        for doc_id in report_ids:
+            loop = self.live(run_id, doc_id)
+            if loop is not None:
+                loop.session.closed = True
+                self.save(run_id, doc_id)
+                filename = loop.origin.filename
+            else:
+                key = self.loop_key(run_id, doc_id)
+                saved = state.get(state.LOOP_SESSION, owner=user_id, key=key)
+                filename = ""
+                if saved is not None:
+                    filename = saved["origin"].get("filename", "")
+                    saved["state"]["closed"] = True
+                    state.put(state.LOOP_SESSION, owner=user_id, key=key, doc=saved)
+            filenames.append(filename or doc_id)
+        state.mutate(
+            state.LOOP_INDEX, owner=user_id, key=run_id,
+            изменить=lambda index: {**(index or {}), "closed": True},
+        )
+        return tuple(filenames)
+
     async def _restore(self, run_id: str, user_id: int | str, doc_id: str | None = None) -> OpenLoop | None:
         key = self.loop_key(run_id, doc_id)
         doc = await asyncio.to_thread(state.get, state.LOOP_SESSION, owner=user_id, key=key)
@@ -171,7 +203,9 @@ class LoopDesk:
         text = ""
         if origin.document_id is not None:
             loaded_text = await asyncio.to_thread(blobs.document_text, origin.document_id)
-            text = loaded_text or ""
+            if not loaded_text:
+                return None
+            text = loaded_text
         session = await asyncio.to_thread(
             restore_loop_session, origin, doc["state"], document_text=text,
             event_sink=LoopEmitter.here(run_id), is_cancelled=RunClosed(run_id),
@@ -183,11 +217,15 @@ class LoopDesk:
 
     def _sweep(self) -> None:
         """Забыть циклы закончившихся ходов — и в памяти, и в хранилище; без этого они копились бы."""
-        for key, loop in list(self._open.items()):
-            run_id = loop.run_id
+        snapshot = tuple(self._open.items())
+        runs = {(loop.run_id, loop.user_id) for _, loop in snapshot}
+        for run_id, user_id in runs:
             if not run_is_active(run_id):
-                self._open.pop(key, None)
+                keys = {key for key, loop in snapshot if loop.run_id == run_id}
+                keys.update(self.loop_key(run_id, doc_id) for doc_id in self.report_ids(run_id, user_id))
+                for key in keys | {run_id}:
+                    self._open.pop(key, None)
+                    state.delete_one(state.LOOP_SESSION, owner=user_id, key=key)
+                    state.delete_one(state.LOOP_OPENING, owner=user_id, key=key)
                 self._queues.pop(run_id, None)
-                state.delete_one(state.LOOP_SESSION, owner=loop.user_id, key=key)
-                state.delete_one(state.LOOP_OPENING, owner=loop.user_id, key=key)
-                state.delete_one(state.LOOP_INDEX, owner=loop.user_id, key=run_id)
+                state.delete_one(state.LOOP_INDEX, owner=user_id, key=run_id)

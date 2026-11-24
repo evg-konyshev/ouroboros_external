@@ -63,6 +63,8 @@ class ExclusiveTool:
         loop = await self._desk.open_loop_of(call) if self.finish_turn else await document_loop(self._desk, call)
         if isinstance(loop, str):
             return loop
+        if self.finish_turn and loop is None:
+            loop = next(iter(await self._desk.loops_of(call)), None)
         if loop is None:
             return no_loop()
         operation = None
@@ -161,10 +163,10 @@ class FinishTool(ExclusiveTool):
         self._subtasks = subtasks
 
     async def _execute_in_queue(self, loop: OpenLoop, call: BoundCall) -> str:
-        loops = await self._desk.loops_of(call)
-        return await asyncio.to_thread(self._finish, loop, call.args, loops)
+        report_ids = await self._desk.report_ids_of(call)
+        return await asyncio.to_thread(self._finish, loop, call.args, report_ids)
 
-    def _finish(self, loop: OpenLoop, args: dict[str, Any], loops: tuple[OpenLoop, ...]) -> str:
+    def _finish(self, loop: OpenLoop, args: dict[str, Any], report_ids: tuple[str, ...]) -> str:
         session = loop.session
         if session.closed:
             return ouro_view.refusal(Refusal.LOOP_CLOSED, "Цикл уже закрыт: aifa_finish принят раньше.")
@@ -187,14 +189,10 @@ class FinishTool(ExclusiveTool):
             result, refused = session.stopped(checked), str(checked)
         else:
             result, refused = session.finish(checked), ""
-        for opened in loops:
-            opened.session.closed = True
-            self._desk.save(opened.run_id, opened.doc_id)
-        document_ids = tuple(opened.doc_id for opened in loops if opened.doc_id is not None)
-        filenames = tuple(opened.origin.filename or opened.doc_id for opened in loops if opened.doc_id is not None)
+        filenames = self._desk.close_turn(loop, report_ids)
         publish_result(
             result, session.event_sink, case_id=session.case_id, document_id=loop.origin.document_id or "",
-            document_ids=document_ids,
+            document_ids=report_ids,
         )
         return ouro_view.accepted(
             result, reason=refused, unfinished=self._subtasks.unfinished(loop.run_id), filenames=filenames,

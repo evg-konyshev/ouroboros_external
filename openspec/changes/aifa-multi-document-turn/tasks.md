@@ -189,7 +189,7 @@ like) are skipped: those parts are not ported (non-goals in design).
 
       Update the shared SSE fixtures (C1.2) and the golden normaliser in `aifa/tests/golden/`.
       Verify: `aifa/tests` green.
-- [ ] 4.6 Restore and sweep (D2, D8). Tests in `tests/loop_tools/test_open_and_restore.py`:
+- [x] 4.6 Restore and sweep (D2, D8). Tests in `tests/loop_tools/test_open_and_restore.py`:
       - two loops saved, a fresh `LoopDesk()`, then `aifa_state(doc_id=B)` → B's saved state;
       - `aifa_finish` closes both restored loops;
       - a loop whose document text is gone is not restored;
