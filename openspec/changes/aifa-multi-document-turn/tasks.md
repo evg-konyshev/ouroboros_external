@@ -247,7 +247,7 @@ like) are skipped: those parts are not ported (non-goals in design).
 
 ## 7. Step B decision record
 
-- [ ] 7.1 Write ADR B (next free number). It records D9, the tool `aifa_compare`, RFA's
+- [x] 7.1 Write ADR B (next free number). It records D9, the tool `aifa_compare`, RFA's
       `comparison_policy_v1` as ported, the attribute sources and the F9 change. Update
       `CONTRACTS.md` §3 (the `aifa_compare` row and the next free C3 number). Verify: F13 green
       on the step B branch. Gate: owner «принято».
