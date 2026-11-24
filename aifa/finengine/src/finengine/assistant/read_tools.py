@@ -24,6 +24,7 @@ from finengine.assistant.turn_record import TurnRecord
 from finengine.config import settings
 from finengine.contracts import FileArtifact
 from finengine.contracts.base import result_id_of
+from finengine.models.document import DocumentMeta
 from finengine.ingestion.document_store import get_store
 from finengine.search.client import SearchUnavailable
 from finengine.search.embeddings import EmbeddingUnavailable
@@ -85,9 +86,10 @@ class StateTool:
                 return ouro_view.refusal(Refusal.BAD_ARGUMENTS, "Артефакты всего Case запрашиваются без doc_id.")
             loop = await self._desk.open_loop_of(call)
         else:
-            loop = await document_loop(self._desk, call)
-            if isinstance(loop, str):
-                return loop
+            selected = await document_loop(self._desk, call)
+            if isinstance(selected, str):
+                return selected
+            loop = selected
         limit = settings.ouroboros_result_limit
         if registry_offset is not None:
             if loop is None:
@@ -119,7 +121,7 @@ def _artifact_id(payload: Any) -> str | None:
 
 def _turn_overview(record: TurnRecord, opened: tuple[str, ...]) -> str:
     store = get_store()
-    rows = []
+    rows: list[tuple[object, ...]] = []
     for doc_id in opened:
         key = LoopDesk.loop_key(record.run_id, doc_id)
         saved = state.get(state.LOOP_SESSION, owner=record.user_id, key=key) or {}
@@ -223,7 +225,7 @@ def _listing(record: TurnRecord, offset: int, query: str) -> str:
         else:
             allowed = set(doc_ids)
             doc_ids = tuple(dict.fromkeys([*(rank.document_id for rank in ranks if rank.document_id in allowed), *doc_ids]))
-    listed = []
+    listed: list[tuple[DocumentMeta, bool] | None] = []
     for doc_id in doc_ids[offset:offset + DOCUMENT_BATCH]:
         store = get_store()
         meta = store.get_document(doc_id)

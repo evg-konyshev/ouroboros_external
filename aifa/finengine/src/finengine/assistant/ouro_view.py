@@ -377,7 +377,7 @@ def documents(
     if ranking_unavailable:
         head += "ранжирование недоступно\n"
     head += "doc_id | компания | страницы | файл | период | тип | язык | текст | факты Case\n"
-    lines = []
+    lines: list[str] = []
     size = len(head) + len(f"\nnext_offset={max(total, offset)}") + 4
     following = offset
     for entry in listed:
