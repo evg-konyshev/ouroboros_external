@@ -49,6 +49,7 @@ from finengine.skills.spec.graph_executor import ExecutionBudget, ExecutionResul
 from finengine.skills.spec.loop_state import LoopOrigin, restore_state
 from finengine.skills.spec.target import Target
 from finengine.store.cases import CasePersistenceError, SqlCaseStore, get_case_store
+from finengine.store.documents import SqlDocumentStore
 
 
 logger = logging.getLogger(__name__)
@@ -815,7 +816,7 @@ def _hand_over_loop(
 
 def open_agent_loop(
     *, open_loop: LoopOpener, owner_id: object, case_id: str, document_id: str, document_text: str,
-    message: str, role: str | None, event_sink: EventSink | None, trace_id: str = "",
+    message: str, role: str | None, event_sink: EventSink | None, document_store: SqlDocumentStore, trace_id: str = "",
 ) -> LoopSession:
     """Цикл, который открыл агент (`aifa_open`, ADR-0060 п. 1): сообщение не разбирается, конвейер не запускается.
     Паспорт фиксирует профиль отчёта и реестр; корень шагов несёт только сущность и версию документа."""
@@ -824,6 +825,7 @@ def open_agent_loop(
         owner_id=owner_id, case_id=case_id, document_id=document_id, document_text=document_text,
         goal_ir=goal, budget=_with_wall_floor(None), trace_id=trace_id,
     )
+    document_store.set_profile_id(document_id, context.passport.classification.profile_id)
     entity = getattr(context.passport, "entity", None)
     target = Target(
         output_type="ReportOutput", document_version=context.document_version,

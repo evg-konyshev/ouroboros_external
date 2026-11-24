@@ -50,7 +50,7 @@ class RegisterTool(ExclusiveTool):
             return ouro_view.refusal(Refusal.BAD_ARGUMENTS, str(problem))
         known = ouro_view.shown_ids(session)
         outcome = session.register_atom(request, code)
-        self._desk.save(loop.run_id)
+        self._desk.save(loop.run_id, loop.doc_id)
         if isinstance(outcome, Refused):
             return ouro_view.refusal(Refusal(outcome.code), outcome.why)
         if isinstance(outcome, StationDown):

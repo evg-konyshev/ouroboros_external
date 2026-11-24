@@ -130,7 +130,7 @@ async def test_the_cycle_is_saved_after_every_move_and_closed_by_the_finish(
 
     run_id, _ = await run_the_cycle(engine, stub)
 
-    saved = state.get(state.LOOP_SESSION, owner=fixture.OWNER, key=run_id)
+    saved = state.get(state.LOOP_SESSION, owner=fixture.OWNER, key=f"{run_id}/{fixture.DOC}")
     assert saved is not None and saved["state"]["closed"] is True
     assert saved["state"]["turns"] == 1 and len(saved["state"]["journal"]) == 1
     assert saved["origin"]["document_id"] == fixture.DOC

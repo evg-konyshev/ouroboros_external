@@ -39,7 +39,10 @@ TOOLS = (
         description=(
             "Открыть цикл: mode=report (по умолчанию) по отчёту или mode=market для рыночного дайджеста без PDF."
         ),
-        schema={"type": "object", "properties": {"mode": {"type": "string", "enum": ["report", "market"]}}},
+        schema={
+            "type": "object",
+            "properties": {"mode": {"type": "string", "enum": ["report", "market"]}, "doc_id": {"type": "string"}},
+        },
         capability_class="mutative",
     ),
     Tool(

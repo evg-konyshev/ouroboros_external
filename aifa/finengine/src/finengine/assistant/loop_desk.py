@@ -11,6 +11,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from typing import Any
+from weakref import WeakValueDictionary
 
 from finengine.assistant.tool_call import BoundCall
 from finengine.assistant.turn_record import run_is_active
@@ -54,6 +55,7 @@ class OpenLoop:
     session: LoopSession
     origin: LoopOrigin
     user_id: int | str
+    doc_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -64,15 +66,16 @@ class HandOver:
     run_id: str
     user_id: int | str
     emitter: LoopEmitter
+    doc_id: str | None
 
     def __call__(self, session: LoopSession, origin: LoopOrigin) -> None:
-        self.desk.adopt(self.run_id, self.user_id, self.emitter, session, origin)
+        self.desk.adopt(self.run_id, self.user_id, self.emitter, session, origin, doc_id=self.doc_id)
 
 
 class LoopDesk:
     def __init__(self) -> None:
         self._open: dict[str, OpenLoop] = {}
-        self._queues: dict[str, asyncio.Lock] = {}
+        self._queues: WeakValueDictionary[str, asyncio.Lock] = WeakValueDictionary()
         self._restoring = asyncio.Lock()
 
     @staticmethod
@@ -82,41 +85,72 @@ class LoopDesk:
     def queue_of(self, run_id: str) -> asyncio.Lock:
         return self._queues.setdefault(run_id, asyncio.Lock())
 
-    def opener(self, run_id: str, user_id: int | str, emitter: LoopEmitter) -> LoopOpener:
-        return HandOver(self, run_id, user_id, emitter)
+    def opener(self, run_id: str, user_id: int | str, emitter: LoopEmitter, *, doc_id: str | None = None) -> LoopOpener:
+        return HandOver(self, run_id, user_id, emitter, doc_id)
 
-    def adopt(self, run_id: str, user_id: int | str, emitter: LoopEmitter, session: LoopSession, origin: LoopOrigin) -> None:
+    def adopt(
+        self, run_id: str, user_id: int | str, emitter: LoopEmitter, session: LoopSession, origin: LoopOrigin,
+        *, doc_id: str | None = None,
+    ) -> None:
         self._sweep()
         session.event_sink.target = emitter  # type: ignore[attr-defined]  # SwitchSink from the loop opener
         session.is_cancelled = RunClosed(run_id)
-        self._open[run_id] = OpenLoop(run_id, session, origin, user_id)
-        session.market_checkpoint = lambda: self.save(run_id)
-        self.save(run_id)
+        self._open[self.loop_key(run_id, doc_id)] = OpenLoop(run_id, session, origin, user_id, doc_id)
+        session.market_checkpoint = lambda: self.save(run_id, doc_id)
+        self.save(run_id, doc_id)
+        if doc_id is not None:
+            self._index_report(run_id, user_id, doc_id)
 
-    def live(self, run_id: str) -> OpenLoop | None:
-        return self._open.get(self.loop_key(run_id))
+    @staticmethod
+    def report_ids(run_id: str, user_id: int | str) -> tuple[str, ...]:
+        index = state.get(state.LOOP_INDEX, owner=user_id, key=run_id) or {}
+        return tuple(index.get("doc_ids", ()))
 
-    async def open_loop_of(self, call: BoundCall) -> OpenLoop | None:
+    @staticmethod
+    def _index_report(run_id: str, user_id: int | str, doc_id: str) -> None:
+        state.mutate(
+            state.LOOP_INDEX, owner=user_id, key=run_id,
+            изменить=lambda current: {
+                **(current or {}),
+                "doc_ids": list(dict.fromkeys([*(current or {}).get("doc_ids", ()), doc_id])),
+            },
+        )
+
+    def live(self, run_id: str, doc_id: str | None = None) -> OpenLoop | None:
+        direct = self._open.get(self.loop_key(run_id, doc_id))
+        if direct is not None or doc_id is not None:
+            return direct
+        return next((loop for loop in self._open.values() if loop.run_id == run_id), None)
+
+    async def open_loop_of(self, call: BoundCall, doc_id: str | None = None) -> OpenLoop | None:
         """Открытый цикл хода: из памяти, иначе из сохранённого; `None` — цикл в этом ходе не открывали."""
         run_id = call.ctx.run_id
-        found = self._open.get(run_id)
+        user_id = call.record.user_id
+        key = self.loop_key(run_id, doc_id)
+        found = self._open.get(key)
         if found is not None:
             return found
         async with self._restoring:
-            found = self._open.get(run_id)
+            if doc_id is None:
+                ids = await asyncio.to_thread(self.report_ids, run_id, user_id)
+                doc_id = ids[0] if ids else None
+                key = self.loop_key(run_id, doc_id)
+            found = self._open.get(key)
             if found is None:
-                found = await self._restore(run_id, call.record.user_id)
+                found = await self._restore(run_id, user_id, doc_id)
             return found
 
-    def save(self, run_id: str) -> None:
-        loop = self._open[run_id]
+    def save(self, run_id: str, doc_id: str | None = None) -> None:
+        key = self.loop_key(run_id, doc_id)
+        loop = self._open[key]
         state.put(
-            state.LOOP_SESSION, owner=loop.user_id, key=run_id,
+            state.LOOP_SESSION, owner=loop.user_id, key=key,
             doc={"origin": loop.origin.to_doc(), "state": state_of(loop.session)},
         )
 
-    async def _restore(self, run_id: str, user_id: int | str) -> OpenLoop | None:
-        doc = await asyncio.to_thread(state.get, state.LOOP_SESSION, owner=user_id, key=run_id)
+    async def _restore(self, run_id: str, user_id: int | str, doc_id: str | None = None) -> OpenLoop | None:
+        key = self.loop_key(run_id, doc_id)
+        doc = await asyncio.to_thread(state.get, state.LOOP_SESSION, owner=user_id, key=key)
         if doc is None:
             return None
         origin = LoopOrigin.from_doc(doc["origin"])
@@ -129,14 +163,17 @@ class LoopDesk:
             event_sink=LoopEmitter.here(run_id), is_cancelled=RunClosed(run_id),
         )
         log.info("цикл хода %s поднят из сохранённого: ходов %d", run_id[:8], session.turns)
-        self._open[run_id] = restored = OpenLoop(run_id, session, origin, user_id)
-        session.market_checkpoint = lambda: self.save(run_id)
+        self._open[key] = restored = OpenLoop(run_id, session, origin, user_id, doc_id)
+        session.market_checkpoint = lambda: self.save(run_id, doc_id)
         return restored
 
     def _sweep(self) -> None:
         """Забыть циклы закончившихся ходов — и в памяти, и в хранилище; без этого они копились бы."""
-        for run_id, loop in list(self._open.items()):
+        for key, loop in list(self._open.items()):
+            run_id = loop.run_id
             if not run_is_active(run_id):
-                del self._open[run_id]
+                self._open.pop(key, None)
                 self._queues.pop(run_id, None)
-                state.delete_one(state.LOOP_SESSION, owner=loop.user_id, key=run_id)
+                state.delete_one(state.LOOP_SESSION, owner=loop.user_id, key=key)
+                state.delete_one(state.LOOP_OPENING, owner=loop.user_id, key=key)
+                state.delete_one(state.LOOP_INDEX, owner=loop.user_id, key=run_id)

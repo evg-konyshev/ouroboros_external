@@ -1,11 +1,12 @@
 {
   "snapshot_version": 1,
   "adr": "ADR-0103",
-  "note": "Пагинация списка документов в aifa_doc (ADR-0103, ADR-0104).",
-  "budget_chars": 6653,
+  "note": "Аргументы выбора отчёта и пагинации списка (ADR-0103, ADR-0104).",
+  "budget_chars": 6683,
   "tools": {
     "aifa_open": {
       "arguments": [
+        "doc_id",
         "mode"
       ],
       "required": [],

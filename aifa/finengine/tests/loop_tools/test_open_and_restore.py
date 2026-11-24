@@ -24,8 +24,11 @@ from tool_harness import Plugin, ctx_of, first_line, open_run
 from finengine.assistant.loop_desk import LoopDesk
 from finengine.assistant.loop_opening import LoopOpening, NoDocument
 from finengine.assistant.tool_api import ToolApi
+from finengine.config import settings
+from finengine.models.document import DocumentMeta
 from finengine.skills.spec.dynamic_run import LoopSession
 from finengine.store import state
+from finengine.store.documents import SqlDocumentStore
 
 CHAT = "p-lukoil"
 MESSAGE = "какая выручка за 2024 год?"
@@ -38,11 +41,14 @@ async def _forbidden(*args, **kwargs):
 
 
 @pytest.fixture(autouse=True)
-def agent_leads(monkeypatch: pytest.MonkeyPatch, coordination) -> None:
+def agent_leads(monkeypatch: pytest.MonkeyPatch, coordination, tmp_path) -> None:
     monkeypatch.setattr("finengine.skills.atoms.intent._default_complete", _forbidden)
     monkeypatch.setattr("finengine.skills.spec.dynamic_run._default_complete", _forbidden)
     locate, read_value = _make_fake_locate_and_read_value_executors({"SALES_REVENUE": 987_654.0})
     patched_build_registry(monkeypatch, locate, read_value)
+    url = f"sqlite:///{tmp_path}/documents.db"
+    monkeypatch.setattr(settings, "documents_database_url", url)
+    SqlDocumentStore(url).add_document(DocumentMeta(doc_id=DOC, filename=f"{DOC}.pdf", owner_id=OWNER), [])
 
 
 def turn(**changes):
@@ -106,7 +112,7 @@ async def test_the_role_chosen_in_the_interface_is_the_role_of_the_cycle() -> No
 async def test_the_cycle_survives_a_restart_of_the_process() -> None:
     """ADR-0023: состояние сохранено после открытия; новый процесс (пустой `LoopDesk`) поднимает его и ведёт дальше."""
     run, plugin, ctx, _ = await opened()
-    assert state.get(state.LOOP_SESSION, owner=OWNER, key=run.run_id) is not None
+    assert state.get(state.LOOP_SESSION, owner=OWNER, key=f"{run.run_id}/{DOC}") is not None
 
     restarted = LoopDesk()
     after = Plugin(ToolApi(Gateway(), LoopOpening(restarted), restarted))
@@ -124,7 +130,7 @@ async def test_a_turn_of_another_owner_finds_no_saved_cycle() -> None:
     """Граница владельца: сохранённый цикл читается только под ключом владельца хода."""
     run, plugin, _, _ = await opened()
 
-    assert state.get(state.LOOP_SESSION, owner=OWNER + 1, key=run.run_id) is None
+    assert state.get(state.LOOP_SESSION, owner=OWNER + 1, key=f"{run.run_id}/{DOC}") is None
     await plugin.close()
     await run.end()
 
@@ -160,7 +166,7 @@ async def test_every_move_is_saved_and_the_restored_cycle_goes_on_from_it() -> N
     """ADR-0023: состояние сохраняется после каждого хода; после перезапуска части цели, журнал и счётчики — те же."""
     run, plugin, ctx, _ = await opened()
     await plugin.call("aifa_move", ctx, MOVE)
-    saved = state.get(state.LOOP_SESSION, owner=OWNER, key=run.run_id)["state"]
+    saved = state.get(state.LOOP_SESSION, owner=OWNER, key=f"{run.run_id}/{DOC}")["state"]
     assert saved["turns"] == 1 and saved["journal"][0]["objective"] == "получить выручку"
 
     restarted = LoopDesk()

@@ -134,7 +134,7 @@ like) are skipped: those parts are not ported (non-goals in design).
       - `tests/loop_tools/test_cycle_and_queue.py`
       - `tests/loop_tools/test_equivalence.py`
       - `aifa/tests/contract/test_loop_end_to_end.py`
-- [ ] 4.2 `aifa_open(doc_id)` (`goal_tools.py`, `loop_opening.py`, `loop_desk.py`): resolve the
+- [x] 4.2 `aifa_open(doc_id)` (`goal_tools.py`, `loop_opening.py`, `loop_desk.py`): resolve the
       document first, then key `run_id/doc_id`, with claim and job kind per document, open inside
       the turn queue, and `LOOP_INDEX`. Change the "after aifa_open" check in `read_tools.py` to
       the kind family (D2). Write the new column `document.profile_id` at loop open with a
@@ -211,7 +211,8 @@ like) are skipped: those parts are not ported (non-goals in design).
 - [ ] 4.9 Single-document path. Run `uv run pytest aifa/tests/contract` and
       `uv run --project aifa/finengine pytest aifa/finengine/tests/loop_tools
       aifa/finengine/tests/dynamic_run`. Verify: green without edits to existing assertions, except
-      the listing fields and the added `turn_documents` event in golden traces.
+      the listing fields, direct assertions on the stored report-loop key (D2), and the added
+      `turn_documents` event in golden traces.
 
 ## 5. Skill texts
 

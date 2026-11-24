@@ -64,7 +64,7 @@ class SearchTool:
 
     async def run(self, call: BoundCall) -> str:
         loop = await self._desk.open_loop_of(call)
-        if loop is None and self._board.of_kind(call.ctx.run_id, OPEN_KIND) is None:
+        if loop is None and self._board.of_kind(call.ctx.run_id, OPEN_KIND, family=True) is None:
             return no_loop(BEFORE_OPEN)
         query = call.args.get("query")
         doc_ids = call.args.get("doc_ids")

@@ -85,7 +85,7 @@ class StateTool:
             if loop is None:
                 return no_loop()
             return await asyncio.to_thread(ouro_view.state, loop.session, limit=limit)
-        if loop is None and self._board.of_kind(call.ctx.run_id, OPEN_KIND) is None:
+        if loop is None and self._board.of_kind(call.ctx.run_id, OPEN_KIND, family=True) is None:
             return no_loop(BEFORE_OPEN)
         store = loop.session.runtime.store if loop is not None else get_case_store()
         rows = await asyncio.to_thread(case_rows, store, call.record.user_id, call.record.case_id)
@@ -147,7 +147,7 @@ class DocTool:
         doc_ids = call.record.doc_ids
         if doc_id or (call.record.scope != "all_workspace" and len(doc_ids) < 2):
             loop = await self._desk.open_loop_of(call)
-            if loop is None and self._board.of_kind(call.ctx.run_id, OPEN_KIND) is None:
+            if loop is None and self._board.of_kind(call.ctx.run_id, OPEN_KIND, family=True) is None:
                 return no_loop(BEFORE_OPEN)
         if not all(item is None or isinstance(item, str) for item in (doc_id, pages, query)):
             return ouro_view.refusal(Refusal.BAD_ARGUMENTS, "doc_id, pages и query — строки.")

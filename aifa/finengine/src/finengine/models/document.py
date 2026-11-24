@@ -32,6 +32,7 @@ class DocumentMeta(BaseModel):
     language: str = "ru"  # "ru" or "en"
     total_pages: int = 0
     text_pages: int | None = Field(default=None, exclude=True)
+    profile_id: str | None = Field(default=None, exclude=True)
     file_path: str = ""
     pdf_origin: str = ""  # "digital" | "scanned" | "mixed" | "" (unknown)
     # Which OCR backend produced the .txt sidecar:

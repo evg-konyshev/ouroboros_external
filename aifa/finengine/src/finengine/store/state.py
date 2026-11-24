@@ -65,6 +65,10 @@ CHAT_SESSION = "chat_session"
 GATEWAY_SESSION = "gateway_session"
 # Сессия цикла хода ouroboros: рецепт сборки и накопленное ходами (`assistant/loop_desk.py`, ADR-0023).
 LOOP_SESSION = "loop_session"
+LOOP_INDEX = "loop_index"
+LOOP_OPENING = "loop_opening"
+
+_COMPOSITE_LOOP_KEYS = {LOOP_SESSION, LOOP_OPENING}
 
 _metadata = MetaData()
 
@@ -85,6 +89,15 @@ def safe_segment(s: str) -> str:
     состояние не найдётся, а выглядеть это будет как «настройки сбросились».
     """
     return "".join(c for c in str(s) if c.isalnum() or c in ("-", "_")) or "_"
+
+
+def _state_key(kind: str, key: Any) -> str:
+    if kind in _COMPOSITE_LOOP_KEYS and "/" in str(key):
+        run_id, _, doc_id = str(key).partition("/")
+        if not run_id or not doc_id or safe_segment(run_id) != run_id or safe_segment(doc_id) != doc_id:
+            raise ValueError("Некорректный ключ отчётного цикла")
+        return f"{run_id}/{doc_id}"
+    return safe_segment(key)
 
 
 class StateStore(Protocol):
@@ -294,15 +307,15 @@ def get_state_store() -> StateStore:
 
 
 def get(kind: str, *, owner: Any, key: Any) -> dict | None:
-    return get_state_store().get(kind, safe_segment(owner), safe_segment(key))
+    return get_state_store().get(kind, safe_segment(owner), _state_key(kind, key))
 
 
 def put(kind: str, *, owner: Any, key: Any, doc: dict) -> None:
-    get_state_store().put(kind, safe_segment(owner), safe_segment(key), doc)
+    get_state_store().put(kind, safe_segment(owner), _state_key(kind, key), doc)
 
 
 def delete_one(kind: str, *, owner: Any, key: Any) -> bool:
-    return get_state_store().delete(kind, safe_segment(owner), safe_segment(key))
+    return get_state_store().delete(kind, safe_segment(owner), _state_key(kind, key))
 
 
 def keys(kind: str, *, owner: Any) -> list[str]:
@@ -315,9 +328,9 @@ def mutate(kind: str, *, owner: Any, key: Any, изменить) -> dict:
     `изменить(текущий_или_None) -> новый`. Функция может позваться внутри
     транзакции, поэтому обязана быть быстрой и без обращений наружу.
     """
-    return get_state_store().mutate(kind, safe_segment(owner), safe_segment(key), изменить)
+    return get_state_store().mutate(kind, safe_segment(owner), _state_key(kind, key), изменить)
 
 
 def claim(kind: str, *, owner: Any, key: Any, doc: dict) -> dict:
     """Атомарно создать запись или вернуть уже существующую."""
-    return get_state_store().claim(kind, safe_segment(owner), safe_segment(key), doc)
+    return get_state_store().claim(kind, safe_segment(owner), _state_key(kind, key), doc)

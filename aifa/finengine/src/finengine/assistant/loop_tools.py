@@ -79,7 +79,7 @@ class ExclusiveTool:
     def _rejected(self, loop: OpenLoop, reason: Rejection) -> str:
         """Отказ хода не тратит, но идёт в счёт отказов подряд: три подряд — `ЛИМИТ` (ADR-0060 п. 5)."""
         loop.session.reject(reason, feedback=f"Твой вызов {self.name} не принят: {reason}.", spends_move=False)
-        self._desk.save(loop.run_id)
+        self._desk.save(loop.run_id, loop.doc_id)
         return ouro_view.refusal(Refusal(reason.code), reason)
 
 
@@ -108,10 +108,10 @@ class MoveTool(ExclusiveTool):
             with session.state_lock:
                 for clause in decision.new_goals:
                     session.market_windows.setdefault(clause.goal_ref, datetime.now(timezone.utc).isoformat())
-                self._desk.save(loop.run_id)
+                self._desk.save(loop.run_id, loop.doc_id)
         known = ouro_view.shown_ids(session)
         outcome = session.move(checked)
-        self._desk.save(loop.run_id)
+        self._desk.save(loop.run_id, loop.doc_id)
         if outcome.refusal:
             return ouro_view.refusal(Refusal(outcome.refusal), outcome.details)
         return ouro_view.moved(
@@ -150,6 +150,6 @@ class FinishTool(ExclusiveTool):
             result, refused = session.stopped(checked), str(checked)
         else:
             result, refused = session.finish(checked), ""
-        self._desk.save(loop.run_id)
+        self._desk.save(loop.run_id, loop.doc_id)
         publish_result(result, session.event_sink, case_id=session.case_id, document_id=loop.origin.document_id or "")
         return ouro_view.accepted(result, reason=refused, unfinished=self._subtasks.unfinished(loop.run_id))

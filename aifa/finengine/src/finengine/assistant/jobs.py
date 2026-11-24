@@ -50,10 +50,11 @@ class JobBoard:
         job = self._jobs.get(job_id)
         return job if job is not None and job.run_id == run_id else None
 
-    def of_kind(self, run_id: str, kind: str) -> Job | None:
+    def of_kind(self, run_id: str, kind: str, *, family: bool = False) -> Job | None:
         """Задание хода этого вида, которое не сорвалось: по нему повторный вызов даёт тот же итог (C3.3)."""
         for job in self._jobs.values():
-            if job.run_id == run_id and job.kind == kind and not _failed(job.task):
+            matches = job.kind == kind or (family and job.kind.startswith(f"{kind}:"))
+            if job.run_id == run_id and matches and not _failed(job.task):
                 return job
         return None
 

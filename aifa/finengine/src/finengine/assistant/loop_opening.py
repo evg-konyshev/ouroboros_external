@@ -7,10 +7,12 @@ from dataclasses import dataclass
 
 from finengine.assistant.loop_desk import LoopDesk, LoopEmitter
 from finengine.assistant.turn_record import TurnRecord
+from finengine.ingestion.document_store import get_store
 from finengine.roles.access import EXTRACTION_ROLES
 from finengine.skills.production_runtime import open_agent_loop
 from finengine.skills.news.market import DigestRunner, open_market_loop
 from finengine.store.cases import SqlCaseStore
+from finengine.store import blobs
 from finengine.skills.spec.dynamic_run import LoopSession
 
 # Документ хода распознаётся фоном с отправки сообщения (`defer_parse`), скан — секунды на страницу.
@@ -43,25 +45,33 @@ class LoopOpening:
     async def __call__(self, record: TurnRecord) -> LoopSession | NoDocument:
         doc_id = gate_document(record)
         if not doc_id:
-            return NoDocument(
-                "У хода нет отчёта: попроси пользователя приложить его." if not record.doc_ids
-                else "В ходе несколько отчётов, а активный не выбран: попроси пользователя выбрать один."
-            )
-        text = await _document_text(doc_id)
-        if not text:
+            return no_document(record)
+        text = (
+            await asyncio.to_thread(blobs.document_text, doc_id)
+            if record.scope == "all_workspace" else await _document_text(doc_id)
+        )
+        store = await asyncio.to_thread(get_store)
+        if not text or await asyncio.to_thread(store.get_document, doc_id) is None:
             return NoDocument(
                 "Текст отчёта ещё не готов или не распознан: попроси пользователя подождать или загрузить его заново."
             )
-        opener = self._desk.opener(record.run_id, record.user_id, LoopEmitter.here(record.run_id))
+        opener = self._desk.opener(record.run_id, record.user_id, LoopEmitter.here(record.run_id), doc_id=doc_id)
         await asyncio.to_thread(
             open_agent_loop, open_loop=opener, owner_id=record.user_id, case_id=record.case_id, document_id=doc_id,
             document_text=text, message=record.message, role=interface_role(record.role),
-            event_sink=None, trace_id=record.trace_id,
+            event_sink=None, document_store=store, trace_id=record.trace_id,
         )
-        opened = self._desk.live(record.run_id)
+        opened = self._desk.live(record.run_id, doc_id)
         if opened is None:
             raise RuntimeError("цикл открыт, но не передан LoopDesk")
         return opened.session
+
+
+def no_document(record: TurnRecord) -> NoDocument:
+    return NoDocument(
+        "У хода нет отчёта: попроси пользователя приложить его." if not record.doc_ids
+        else "В ходе несколько отчётов, а активный не выбран: чтобы выбрать один, передай doc_id."
+    )
 
 
 def gate_document(record: TurnRecord) -> str:

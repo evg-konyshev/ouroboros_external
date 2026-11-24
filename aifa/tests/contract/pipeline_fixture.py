@@ -54,6 +54,7 @@ class FixtureStore:
     """Хранилище документов: документ хода принадлежит пользователю входа."""
 
     text_pages: int | None = None
+    profile_id: str | None = None
 
     def get_document(self, doc_id: str) -> DocumentMeta | None:
         from finengine.models.document import DocumentMeta
@@ -62,12 +63,16 @@ class FixtureStore:
             return None
         return DocumentMeta(
             doc_id=doc_id, owner_id=OWNER, filename="severstal-2024.pdf", company_name="Северсталь",
-            text_pages=self.text_pages,
+            text_pages=self.text_pages, profile_id=self.profile_id,
         )
 
     def set_text_pages(self, doc_id: str, count: int, *, if_missing: bool = False) -> None:
         if doc_id == DOC and (self.text_pages is None or not if_missing):
             self.text_pages = count
+
+    def set_profile_id(self, doc_id: str, profile_id: str) -> None:
+        if doc_id == DOC:
+            self.profile_id = profile_id
 
 
 class NoOldChat:
@@ -164,6 +169,7 @@ def install(
     monkeypatch.setattr(config.settings, "data_dir", tmp_path)
     monkeypatch.setattr(config.settings, "redis_url", "")
     if not real_documents:
+        monkeypatch.setattr("finengine.assistant.loop_opening.get_store", lambda: store)
         monkeypatch.setattr(read_tools, "get_store", lambda: store)
         monkeypatch.setattr(read_tools, "document_text_exists", lambda doc_id: doc_id == DOC)
         monkeypatch.setattr(app_main, "get_store", lambda: store)
