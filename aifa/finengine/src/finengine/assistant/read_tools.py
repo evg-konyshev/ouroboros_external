@@ -27,7 +27,8 @@ from finengine.contracts.base import result_id_of
 from finengine.ingestion.document_store import get_store
 from finengine.search.client import SearchUnavailable
 from finengine.search.embeddings import EmbeddingUnavailable
-from finengine.skills.spec.dynamic_run import artifact_content, case_rows
+from finengine.skills.spec.dynamic_run import RunLimits, artifact_content, case_rows
+from finengine.store import state
 from finengine.store.blobs import document_text, document_text_exists
 from finengine.store.cases import get_case_store
 
@@ -75,6 +76,10 @@ class StateTool:
         offset = call.args.get("artifact_offset", 0)
         if "artifact_offset" in call.args and (type(offset) is not int or offset < 0 or not ids or len(ids) != 1 or view != "full"):
             return ouro_view.refusal(Refusal.BAD_ARGUMENTS, "artifact_offset требует один artifact_id, full и целое смещение >= 0")
+        if not ids and index is None and registry_offset is None and "doc_id" not in call.args:
+            opened = await self._desk.report_ids_of(call)
+            if len(opened) > 1:
+                return await asyncio.to_thread(_turn_overview, call.record, opened)
         if ids or index is not None:
             if "doc_id" in call.args:
                 return ouro_view.refusal(Refusal.BAD_ARGUMENTS, "Артефакты всего Case запрашиваются без doc_id.")
@@ -110,6 +115,33 @@ class StateTool:
 
 def _artifact_id(payload: Any) -> str | None:
     return getattr(payload, "output_id", None) or result_id_of(payload)
+
+
+def _turn_overview(record: TurnRecord, opened: tuple[str, ...]) -> str:
+    store = get_store()
+    rows = []
+    for doc_id in opened:
+        key = LoopDesk.loop_key(record.run_id, doc_id)
+        saved = state.get(state.LOOP_SESSION, owner=record.user_id, key=key) or {}
+        progress = saved.get("state", {})
+        meta = store.get_document(doc_id)
+        card = {} if meta is None else meta.meta_card
+        turns = progress.get("turns", 0)
+        max_moves = progress.get("max_moves", RunLimits().max_moves)
+        rows.append((
+            doc_id,
+            saved.get("origin", {}).get("filename") or (meta.filename if meta else doc_id),
+            card.get("issuer") or (meta.company_name if meta else "") or "—",
+            card.get("period") or (meta.period if meta else "") or "—",
+            progress.get("profile_id") or (meta.profile_id if meta else None) or "—",
+            turns,
+            max(0, max_moves - turns),
+        ))
+    opened_set = set(opened)
+    return ouro_view.turn_overview(
+        rows, tuple(doc_id for doc_id in record.doc_ids if doc_id not in opened_set),
+        deadline=LoopDesk.report_deadline(record.run_id, record.user_id), limit=settings.ouroboros_result_limit,
+    )
 
 
 def _index_entries(rows: list[dict], output_type: str) -> list[dict]:

@@ -201,7 +201,7 @@ like) are skipped: those parts are not ported (non-goals in design).
       - `aifa_wait(task_id)` at 12:18 with `wait_sec=240` returns by 12:20;
       - after a restore, B keeps the shortened limit;
       - a single loop's limit is unchanged.
-- [ ] 4.8 Turn overview (D12): `aifa_state()` without arguments among several loops →
+- [x] 4.8 Turn overview (D12): `aifa_state()` without arguments among several loops →
       `ouro_view.turn_overview`. Tests:
       - loops on A and B and C unopened → the overview lists A and B with profile and moves, C as
         not opened, and the deadline. Fails before: `неверные_аргументы`.

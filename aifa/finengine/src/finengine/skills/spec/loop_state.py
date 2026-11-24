@@ -62,6 +62,8 @@ def state_of(session: LoopSession) -> dict[str, Any]:
         "turns": session.turns, "idle": session.idle, "rejected": session.rejected, "closed": session.closed,
         "elapsed": monotonic() - session.opened_at, "feedback": session.feedback,
         "max_wall_seconds": session.limits.max_wall_seconds,
+        "max_moves": session.limits.max_moves,
+        "profile_id": session.run_passport.classification.profile_id if session.run_passport is not None else None,
         "created": session.created, "build_attempts": session.build_attempts,
         "evidence_generation": session.evidence_generation,
         "dead_end_actions": [[list(signature), generation] for signature, generation in session.dead_end_actions.items()],
@@ -81,8 +83,11 @@ def restore_state(session: LoopSession, doc: dict[str, Any]) -> None:
     session.turns, session.idle, session.rejected = doc["turns"], doc["idle"], doc["rejected"]
     session.closed, session.feedback = doc["closed"], doc["feedback"]
     session.opened_at = monotonic() - doc["elapsed"]
-    if "max_wall_seconds" in doc:
-        session.limits = replace(session.limits, max_wall_seconds=doc["max_wall_seconds"])
+    session.limits = replace(
+        session.limits,
+        max_wall_seconds=doc.get("max_wall_seconds", session.limits.max_wall_seconds),
+        max_moves=doc.get("max_moves", session.limits.max_moves),
+    )
     session.created, session.build_attempts = doc["created"], doc["build_attempts"]
     session.evidence_generation = doc["evidence_generation"]
     session.dead_end_actions = {tuple(signature): generation for signature, generation in doc["dead_end_actions"]}

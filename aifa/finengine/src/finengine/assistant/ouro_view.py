@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from enum import StrEnum
 
 from finengine.assistant.doc_pages import Match, Page
@@ -390,7 +391,7 @@ def documents(
                 card.get("doc_kind") or meta.doc_type.value, meta.language, "готов" if ready else "не готов",
                 f"фактов: {fact_counts.get(meta.doc_id, 0)}",
             )
-            line = " | ".join(" ".join(str(field).replace("|", "¦").split()) for field in fields)
+            line = _table_row(fields)
             if size + len(line) + 1 > limit:
                 if not lines:
                     return refusal(Refusal.BAD_ARGUMENTS, "Карточка документа не помещается в предел ответа.")
@@ -400,6 +401,30 @@ def documents(
         following += 1
     next_offset = following if following < total else "null"
     return head + ("\n".join(lines) or "—") + f"\nnext_offset={next_offset}"
+
+
+def _table_row(fields: tuple[object, ...]) -> str:
+    return " | ".join(" ".join(str(field).replace("|", "¦").split()) for field in fields)
+
+
+def turn_overview(
+    rows: list[tuple[object, ...]], unopened: tuple[str, ...], *, deadline: float | None, limit: int,
+) -> str:
+    end = datetime.fromtimestamp(deadline, tz=timezone.utc).isoformat(timespec="seconds") if deadline is not None else "—"
+    head = (
+        f"{Code.READY}\n## Обзор хода\nСрок: {end}\n"
+        "doc_id | файл | компания | период | профиль | ходов использовано | осталось\n"
+        + "\n".join(_table_row(row) for row in rows)
+        + "\nНе открыты: "
+    )
+    suffix = "… Остальные: aifa_doc."
+    room = limit - len(head)
+    if room < len(suffix):
+        return refusal(Refusal.BAD_ARGUMENTS, "Обзор хода превышает предел ответа.")
+    names = ", ".join(unopened) or "—"
+    if len(names) > room:
+        names = names[:room - len(suffix)].rsplit(", ", 1)[0] + suffix
+    return head + names
 
 
 def doc_pages(doc_id: str, shown: list[Page], wanted: str, *, limit: int) -> str:

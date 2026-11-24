@@ -202,7 +202,7 @@ async def test_report_and_market_loops_cannot_mix(registry, market_first):
 
 @pytest.fixture
 async def two_loops(registry):
-    run = turn(doc_ids=(DOC, B), scope="all_workspace")
+    run = turn(doc_ids=(DOC, B, C), scope="all_workspace")
     desk = LoopDesk()
     plugin = Plugin(ToolApi(Gateway(), LoopOpening(desk), desk))
     ctx = ctx_of(run.run_id, owner_id=str(OWNER), chat_id=CHAT)
@@ -417,3 +417,29 @@ async def test_reports_share_one_deadline_after_restore(registry, monkeypatch):
         await after.close()
         await plugin.close()
         await run.end()
+
+
+async def test_state_overview_reads_saved_metadata_while_the_turn_queue_is_held(two_loops, monkeypatch):
+    run, desk, plugin, ctx = two_loops
+    await plugin.call("aifa_move", ctx, {**MOVE, "doc_id": B})
+    sub = {**ctx, "task_id": "plan-author", "root_task_id": ROOT, "task_depth": 1}
+    restarted = LoopDesk()
+    after = Plugin(ToolApi(Gateway(), LoopOpening(restarted), restarted))
+
+    def forbidden(*args, **kw):
+        raise AssertionError("Обзор хода не загружает текст отчёта")
+
+    monkeypatch.setattr(blobs, "document_text", forbidden)
+    try:
+        async with desk.queue_of(run.run_id):
+            reply = await asyncio.wait_for(plugin.call("aifa_state", sub), 2)
+        assert first_line(reply) == "ГОТОВО"
+        assert "Обзор хода" in reply.text and "Срок" in reply.text
+        assert f"{DOC}.pdf" in reply.text and f"{B}.pdf" in reply.text and C in reply.text
+        assert "ifrs_nf_ru" in reply.text and "0 | 12" in reply.text and "1 | 11" in reply.text
+        assert "Реестр показателей" not in reply.text and "Полученные артефакты" not in reply.text
+        assert (await after.call("aifa_state", sub)).text == reply.text
+        named = await plugin.call("aifa_state", sub, {"doc_id": B})
+        assert first_line(named) == "ГОТОВО" and "Реестр показателей" in named.text
+    finally:
+        await after.close()
