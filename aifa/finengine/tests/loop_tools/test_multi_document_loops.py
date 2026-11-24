@@ -7,6 +7,7 @@ import asyncio
 import json
 import threading
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from test_open_and_restore import (
@@ -367,3 +368,52 @@ async def test_one_finish_closes_both_loops_and_announces_both_documents(two_loo
     assert documents == [{"type": "turn_documents", "document_ids": [DOC, B]}]
     first_card = next(i for i, event in enumerate(events) if event.get("type") == "typed_result")
     assert events.index(documents[0]) < first_card
+
+
+async def test_reports_share_one_deadline_after_restore(registry, monkeypatch):
+    from finengine.assistant import loop_desk, subtask_waits
+    from finengine.skills.spec import dynamic_run, loop_state
+
+    now = 0.0
+
+    def monotonic_now():
+        return 10_000.0 + now
+
+    async def advance(seconds):
+        nonlocal now
+        now += seconds
+        await asyncio.sleep(0)
+
+    for module in (loop_desk, subtask_waits, dynamic_run, loop_state):
+        monkeypatch.setattr(module, "monotonic", monotonic_now, raising=False)
+    monkeypatch.setattr(loop_desk, "time", lambda: 1_800_000_000.0 + now, raising=False)
+    monkeypatch.setattr(subtask_waits, "asyncio", SimpleNamespace(sleep=advance))
+    monkeypatch.setattr(subtask_waits, "POLL_SEC", 30)
+    monkeypatch.setattr(settings, "ouroboros_loop_max_wall_sec", 1200)
+    run = turn(doc_ids=(DOC, B), scope="all_workspace")
+    desk = LoopDesk()
+    plugin = Plugin(ToolApi(Gateway(), LoopOpening(desk), desk))
+    recovered = LoopDesk()
+    after = Plugin(ToolApi(Gateway(), LoopOpening(recovered), recovered))
+    ctx = ctx_of(run.run_id, owner_id=str(OWNER), chat_id=CHAT)
+    try:
+        assert first_line(await plugin.call("aifa_open", ctx, {"doc_id": DOC})) == "ГОТОВО"
+        assert desk.live(run.run_id, DOC).session.limits.max_wall_seconds == 1200
+        now = 900
+        assert first_line(await plugin.call("aifa_open", ctx, {"doc_id": B})) == "ГОТОВО"
+        assert desk.live(run.run_id, B).session.limits.max_wall_seconds == 300
+        index = state.get(state.LOOP_INDEX, owner=OWNER, key=run.run_id)
+        assert index["deadline"] == 1_800_001_200.0
+
+        now = 1080
+        assert first_line(await after.call("aifa_state", ctx, {"doc_id": B})) == "ГОТОВО"
+        assert recovered.live(run.run_id, B).session.limits.max_wall_seconds == 300
+        assert first_line(await after.call("aifa_wait", ctx, {"task_id": "author", "wait_sec": 240})) == "ЛИМИТ"
+        assert now == 1200
+        now = 1260
+        for doc_id in (DOC, B):
+            assert first_line(await after.call("aifa_move", ctx, {**MOVE, "doc_id": doc_id})) == "ЛИМИТ"
+    finally:
+        await after.close()
+        await plugin.close()
+        await run.end()

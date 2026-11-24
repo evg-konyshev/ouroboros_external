@@ -192,11 +192,7 @@ class WaitTool:
     async def _subtask(self, call: BoundCall) -> str:
         """Срок подзадачи — от первого опроса и не дольше времени цикла; вне цикла — только срок (ADR-0044 п. 5)."""
         task_id = call.args["task_id"]
-        cycles = await self._desk.loops_of(call)
-        cycle_ends_at = max(
-            (loop.session.opened_at + loop.session.limits.max_wall_seconds for loop in cycles),
-            default=None,
-        )
+        cycle_ends_at = await self._desk.deadline_of(call)
         try:
             waited = await self._subtasks.wait(
                 call.ctx.run_id, task_id, float(call.args["wait_sec"]), cycle_ends_at=cycle_ends_at

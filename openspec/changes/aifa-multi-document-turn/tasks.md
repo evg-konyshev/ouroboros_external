@@ -194,7 +194,7 @@ like) are skipped: those parts are not ported (non-goals in design).
       - `aifa_finish` closes both restored loops;
       - a loop whose document text is gone is not restored;
       - `_sweep(run_id)` deletes the index and both `run_id/<doc>` states.
-- [ ] 4.7 One turn deadline (D11) in `loop_desk.py`/`loop_opening.py` and `goal_tools.py:157`.
+- [x] 4.7 One turn deadline (D11) in `loop_desk.py`/`loop_opening.py` and `goal_tools.py:157`.
       Tests in `tests/loop_tools/test_multi_document_loops.py` with a frozen clock:
       - A opens at 12:00 (limit 1200 s), B at 12:15 → B's `limits.max_wall_seconds` is 300, and a move
         on B at 12:21 gets `ЛИМИТ`. Fails before: B runs until 12:35.

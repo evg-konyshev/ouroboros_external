@@ -5,7 +5,7 @@
 """
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from time import monotonic
 from typing import Any
 
@@ -61,6 +61,7 @@ def state_of(session: LoopSession) -> dict[str, Any]:
     return {
         "turns": session.turns, "idle": session.idle, "rejected": session.rejected, "closed": session.closed,
         "elapsed": monotonic() - session.opened_at, "feedback": session.feedback,
+        "max_wall_seconds": session.limits.max_wall_seconds,
         "created": session.created, "build_attempts": session.build_attempts,
         "evidence_generation": session.evidence_generation,
         "dead_end_actions": [[list(signature), generation] for signature, generation in session.dead_end_actions.items()],
@@ -80,6 +81,8 @@ def restore_state(session: LoopSession, doc: dict[str, Any]) -> None:
     session.turns, session.idle, session.rejected = doc["turns"], doc["idle"], doc["rejected"]
     session.closed, session.feedback = doc["closed"], doc["feedback"]
     session.opened_at = monotonic() - doc["elapsed"]
+    if "max_wall_seconds" in doc:
+        session.limits = replace(session.limits, max_wall_seconds=doc["max_wall_seconds"])
     session.created, session.build_attempts = doc["created"], doc["build_attempts"]
     session.evidence_generation = doc["evidence_generation"]
     session.dead_end_actions = {tuple(signature): generation for signature, generation in doc["dead_end_actions"]}

@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from time import monotonic, time
 from typing import Any
 from weakref import WeakValueDictionary
 
@@ -96,11 +97,19 @@ class LoopDesk:
         self._sweep()
         session.event_sink.target = emitter  # type: ignore[attr-defined]  # SwitchSink from the loop opener
         session.is_cancelled = RunClosed(run_id)
+        deadline = None
+        if doc_id is not None:
+            opened_at = time() - (monotonic() - session.opened_at)
+            deadline = self.report_deadline(run_id, user_id)
+            if deadline is None:
+                deadline = opened_at + session.limits.max_wall_seconds
+            else:
+                session.limits = replace(session.limits, max_wall_seconds=max(0.0, deadline - opened_at))
         self._open[self.loop_key(run_id, doc_id)] = OpenLoop(run_id, session, origin, user_id, doc_id)
         session.market_checkpoint = lambda: self.save(run_id, doc_id)
         self.save(run_id, doc_id)
-        if doc_id is not None:
-            self._index_report(run_id, user_id, doc_id)
+        if doc_id is not None and deadline is not None:
+            self._index_report(run_id, user_id, doc_id, deadline)
 
     @staticmethod
     def report_ids(run_id: str, user_id: int | str) -> tuple[str, ...]:
@@ -111,6 +120,19 @@ class LoopDesk:
     def reports_closed(run_id: str, user_id: int | str) -> bool:
         index = state.get(state.LOOP_INDEX, owner=user_id, key=run_id) or {}
         return bool(index.get("closed"))
+
+    @staticmethod
+    def report_deadline(run_id: str, user_id: int | str) -> float | None:
+        index = state.get(state.LOOP_INDEX, owner=user_id, key=run_id) or {}
+        return index.get("deadline")
+
+    async def deadline_of(self, call: BoundCall) -> float | None:
+        async with self._restoring:
+            deadline = await asyncio.to_thread(self.report_deadline, call.ctx.run_id, call.record.user_id)
+        if deadline is not None:
+            return monotonic() + deadline - time()
+        loop = await self.open_loop_of(call)
+        return None if loop is None else loop.session.opened_at + loop.session.limits.max_wall_seconds
 
     async def report_ids_of(self, call: BoundCall) -> tuple[str, ...]:
         async with self._restoring:
@@ -126,12 +148,13 @@ class LoopDesk:
         return tuple(result)
 
     @staticmethod
-    def _index_report(run_id: str, user_id: int | str, doc_id: str) -> None:
+    def _index_report(run_id: str, user_id: int | str, doc_id: str, deadline: float) -> None:
         state.mutate(
             state.LOOP_INDEX, owner=user_id, key=run_id,
             изменить=lambda current: {
                 **(current or {}),
                 "doc_ids": list(dict.fromkeys([*(current or {}).get("doc_ids", ()), doc_id])),
+                "deadline": (current or {}).get("deadline", deadline),
             },
         )
 
@@ -210,6 +233,10 @@ class LoopDesk:
             restore_loop_session, origin, doc["state"], document_text=text,
             event_sink=LoopEmitter.here(run_id), is_cancelled=RunClosed(run_id),
         )
+        if doc_id is not None:
+            deadline = await asyncio.to_thread(self.report_deadline, run_id, user_id)
+            if deadline is not None:
+                session.opened_at = monotonic() - (session.limits.max_wall_seconds - (deadline - time()))
         log.info("цикл хода %s поднят из сохранённого: ходов %d", run_id[:8], session.turns)
         self._open[key] = restored = OpenLoop(run_id, session, origin, user_id, doc_id)
         session.market_checkpoint = lambda: self.save(run_id, doc_id)
