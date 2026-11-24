@@ -255,12 +255,14 @@ async def test_listing_counts_metric_facts_of_the_active_version(base, monkeypat
         base.register_document(
             owner_id=OWNER, case_id=CASE, logical_name=doc_id, document_id=doc_id, document_version=version,
         )
-    for version, facts in (
-        ("new-a", (_metric_for_period("FY 2024", 10), _metric_for_period("FY 2023", 8))),
-        ("old-a", (_metric_for_period("FY 2024", 4),)),
+    current = (_metric_for_period("FY 2024", 10), _metric_for_period("FY 2023", 8))
+    for node, version, facts in (
+        ("read", "new-a", current),
+        ("reuse", "new-a", current[:1]),
+        ("legacy", "old-a", (_metric_for_period("FY 2024", 4),)),
     ):
         base.store.put_artifact(
-            OWNER, CASE, node_key=NodeKey(atom_name="read.value", atom_version="1", args_fingerprint=version),
+            OWNER, CASE, node_key=NodeKey(atom_name="read.value", atom_version="1", args_fingerprint=node),
             output_type="ExtractedMetric", payloads=facts, concept="SALES_REVENUE", entity_ref=None,
             period_ref=None, basis=None, document_version=version, policy_version="test",
         )

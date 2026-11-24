@@ -18,7 +18,7 @@ from typing import Any
 from pydantic import BaseModel
 from sqlalchemy import (
     JSON, Boolean, Column, DateTime, Integer, MetaData, String, Table, UniqueConstraint,
-    and_, func, select, update,
+    and_, case, func, select, update,
 )
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
@@ -509,8 +509,9 @@ class SqlCaseStore:
     def metric_fact_counts(self, owner_id: object, case_id: str, document_ids: Sequence[str]) -> dict[str, int]:
         document = CASE_DOCUMENT.c
         artifact = CASE_ARTIFACT.c
+        legacy_payloads = case((func.json_array_length(artifact.evidence_ids) == 0, artifact.payloads))
         query = (
-            select(document.document_id, func.sum(func.json_array_length(artifact.payloads)))
+            select(document.document_id, artifact.evidence_ids, legacy_payloads)
             .select_from(CASE_DOCUMENT.join(CASE_ARTIFACT, and_(
                 document.owner_key == artifact.owner_key,
                 document.case_id == artifact.case_id,
@@ -522,10 +523,15 @@ class SqlCaseStore:
                 artifact.valid.is_(True),
                 artifact.output_type.in_(("ExtractedMetric", "CalculatedMetric", "UserProvidedMetric")),
             )
-            .group_by(document.document_id)
         )
+        facts: dict[str, set[str]] = {}
         with self._engine.begin() as conn:
-            return {doc_id: count for doc_id, count in conn.execute(query)}
+            for doc_id, ids, payloads in conn.execute(query):
+                indexed_ids = ids or [
+                    result_id for item in payloads or () if (result_id := result_id_of(_unpack_value(item)))
+                ]
+                facts.setdefault(doc_id, set()).update(indexed_ids)
+        return {doc_id: len(ids) for doc_id, ids in facts.items()}
 
     def put_artifact(
         self, owner_id: object, case_id: str, *, node_key: NodeKey, output_type: str,
