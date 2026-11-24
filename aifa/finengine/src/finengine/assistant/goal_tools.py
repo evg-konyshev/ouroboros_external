@@ -16,7 +16,7 @@ from typing import Any, Protocol
 from finengine.assistant import ouro_view
 from finengine.assistant.events import Event
 from finengine.assistant.jobs import Job, JobBoard, RunEnded
-from finengine.assistant.loop_desk import LoopDesk
+from finengine.assistant.loop_desk import MAX_REPORT_LOOPS, LoopDesk
 from finengine.assistant.loop_opening import NoDocument, gate_document, no_document
 from finengine.assistant.ouro_view import Refusal
 from finengine.assistant.subtask_waits import SubtaskWaits, Verdict
@@ -121,6 +121,10 @@ class OpenTool:
                 if loop.origin.mode != mode:
                     return ouro_view.refusal(Refusal.BAD_ARGUMENTS, "Режим уже открытого цикла менять нельзя")
                 return ouro_view.opened(loop.session, limit=settings.ouroboros_result_limit)
+            if doc_id is not None:
+                opened = await asyncio.to_thread(self._desk.report_ids, run_id, call.record.user_id)
+                if len(opened) >= MAX_REPORT_LOOPS:
+                    return ouro_view.refusal(Refusal.LOOPS_LIMIT, f"За ход можно открыть до {MAX_REPORT_LOOPS} отчётных циклов.")
             # Заявку пишем один раз; ожидающий только читает её, пока открытие не закончится.
             if waiting:
                 claim = await asyncio.to_thread(state.get, state.LOOP_OPENING, owner=call.record.user_id, key=key)

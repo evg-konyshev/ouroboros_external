@@ -151,7 +151,7 @@ like) are skipped: those parts are not ported (non-goals in design).
       - the ambiguity text contains `doc_id`;
       - `profile_id` is set for A after the open, and is still set after a later doc-type patch or
         ingestion upsert.
-- [ ] 4.3 Loop limit 6 plus `Refusal.LOOPS_LIMIT = "лимит_циклов"`. Tests:
+- [x] 4.3 Loop limit 6 plus `Refusal.LOOPS_LIMIT = "лимит_циклов"`. Tests:
       - the 7th open → `ОТКАЗ лимит_циклов`, and the six still move;
       - market after report → `неверные_аргументы`, and report after market → the same.
 - [ ] 4.4 `doc_id` routing for `aifa_move`, `aifa_register_atom`, `aifa_report`, `aifa_atoms` and

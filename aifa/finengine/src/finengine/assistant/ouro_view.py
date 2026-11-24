@@ -60,6 +60,7 @@ class Refusal(StrEnum):
     ATTEMPTS_LIMIT = "лимит_попыток"
     ATOMS_LIMIT = "лимит_атомов"
     REPORTS_LIMIT = "лимит_отчётов"
+    LOOPS_LIMIT = "лимит_циклов"
     JOB_NOT_FOUND = "задание_не_найдено"
     SUBTASK_SILENT = "подзадача_не_ответила"
     SEARCH_DOWN = "поиск_недоступен"

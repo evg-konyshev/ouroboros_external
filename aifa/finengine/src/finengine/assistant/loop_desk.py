@@ -22,6 +22,7 @@ from finengine.skills.spec.loop_state import LoopOrigin, state_of
 from finengine.store import blobs, state
 
 log = logging.getLogger(__name__)
+MAX_REPORT_LOOPS = 6
 
 
 @dataclass(frozen=True)

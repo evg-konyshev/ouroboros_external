@@ -11,6 +11,7 @@ from test_open_and_restore import CHAT, DOC, MOVE, OWNER, LoopDesk, LoopOpening,
 from loop_support import Gateway
 from tool_harness import Plugin, ctx_of, first_line
 
+from finengine.assistant.jobs import JobBoard
 from finengine.assistant.loop_tools import MoveTool
 from finengine.assistant.tool_api import ToolApi
 from finengine.config import settings
@@ -144,5 +145,49 @@ async def test_a_started_report_open_allows_the_document_listing(registry, monke
         assert first_line(await opening) == "ГОТОВО"
     finally:
         release.set()
+        await plugin.close()
+        await run.end()
+
+
+async def test_a_seventh_report_is_refused_without_changing_existing_loops(registry, monkeypatch, severstal_text):
+    reports = tuple(f"report-{i}" for i in range(7))
+    for doc_id in reports:
+        registry.add_document(DocumentMeta(doc_id=doc_id, filename=f"{doc_id}.pdf", owner_id=OWNER), [])
+    monkeypatch.setattr(blobs, "document_text", lambda doc_id, **kw: f"{severstal_text}\n{doc_id}")
+    run = turn(doc_ids=reports, scope="all_workspace")
+    desk = LoopDesk()
+    plugin = Plugin(ToolApi(Gateway(), LoopOpening(desk), desk))
+    ctx = ctx_of(run.run_id, owner_id=str(OWNER), chat_id=CHAT)
+    try:
+        for doc_id in reports[:6]:
+            assert first_line(await plugin.call("aifa_open", ctx, {"doc_id": doc_id})) == "ГОТОВО"
+        reply = await plugin.call("aifa_open", ctx, {"doc_id": reports[6]})
+        assert first_line(reply) == "ОТКАЗ лимит_циклов"
+        assert desk.live(run.run_id, reports[6]) is None
+        assert desk.report_ids(run.run_id, OWNER) == reports[:6]
+        mover = MoveTool(JobBoard(0.05), desk)
+        for doc_id in reports[:6]:
+            loop = desk.live(run.run_id, doc_id)
+            assert loop is not None and loop.session.turns == 0
+            result = await asyncio.to_thread(mover._execute, loop, MOVE)
+            assert result.startswith("ГОТОВО") and loop.session.turns == 1
+    finally:
+        await plugin.close()
+        await run.end()
+
+
+@pytest.mark.parametrize("market_first", [False, True])
+async def test_report_and_market_loops_cannot_mix(registry, market_first):
+    run = turn()
+    desk = LoopDesk()
+    plugin = Plugin(ToolApi(Gateway(), LoopOpening(desk), desk))
+    ctx = ctx_of(run.run_id, owner_id=str(OWNER), chat_id=CHAT)
+    market, report = {"mode": "market"}, {"doc_id": DOC}
+    first, second = (market, report) if market_first else (report, market)
+    try:
+        assert first_line(await plugin.call("aifa_open", ctx, first)) == "ГОТОВО"
+        assert first_line(await plugin.call("aifa_open", ctx, second)) == "ОТКАЗ неверные_аргументы"
+        assert desk.report_ids(run.run_id, OWNER) == (() if market_first else (DOC,))
+    finally:
         await plugin.close()
         await run.end()
