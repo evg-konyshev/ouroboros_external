@@ -50,6 +50,7 @@ export type TextMessage = {
   /** Files the user uploaded with this turn — rendered as chips inside
    * the user bubble. Empty for assistant messages. */
   attachments?: AttachedFile[];
+  turnDocumentIds?: string[];
   /** For assistant messages: which arch / model produced the answer.
    * Stamped at request time and rendered as a small badge under the
    * bubble so the user can tell which agent each reply came from. */
@@ -1895,6 +1896,7 @@ export function resetForReplay(m: TextMessage): TextMessage {
     planGraphs: undefined,
     dynamicTrace: undefined,
     typedErrors: [],
+    turnDocumentIds: undefined,
   };
 }
 
@@ -2016,6 +2018,8 @@ export function applyChatEvent(msg: TextMessage, ev: ScenarioRunEvent): TextMess
       };
     case "analysis_card":
       return { ...msg, analysisCard: ev.card };
+    case "turn_documents":
+      return { ...msg, turnDocumentIds: ev.document_ids };
     case "typed_result": {
       const resultId = typedResultId(ev.result);
       const prior = msg.typedResults ?? [];

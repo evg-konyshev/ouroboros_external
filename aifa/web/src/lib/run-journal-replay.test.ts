@@ -1,7 +1,10 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { TurnDocumentNames } from "@/components/workspace/panes/turn-document-names";
 import { chatRunStream, type ChatStreamEvent } from "@/lib/api";
 import { executionGraphsOf } from "@/lib/execution-graphs";
 import { createRunProbe } from "@/lib/run-recovery";
@@ -55,6 +58,22 @@ describe("replay of the run journal through the A11 envelope", () => {
       error: { code: "dynamic_run_failed" },
     });
     expect(events.at(-1)).toEqual({ type: "done", status: "failed" });
+  });
+
+  it("renders the report names from the replayed turn_documents frame in order", async () => {
+    const msg = replay(await unwrap());
+    const html = renderToStaticMarkup(createElement(TurnDocumentNames, {
+      ids: msg.turnDocumentIds,
+      docs: [
+        { doc_id: "wire-doc-b", filename: "РСБУ 2024.pdf" },
+        { doc_id: "wire-doc-a", filename: "МСФО 2024.pdf" },
+        { doc_id: "not-used", filename: "Черновик.pdf" },
+      ],
+    }));
+
+    expect(html).toContain("МСФО 2024.pdf, РСБУ 2024.pdf");
+    expect(html).not.toContain("Черновик.pdf");
+    expect(resetForReplay(msg).turnDocumentIds).toBeUndefined();
   });
 
   it("restores graphs, moves and states with the finish time from NodeRun, not the replay clock", async () => {

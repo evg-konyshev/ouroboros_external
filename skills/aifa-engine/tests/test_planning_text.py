@@ -55,6 +55,21 @@ def test_open_always_opens_a_cycle_and_the_agent_plans_before_running_scenarios(
     assert "сценарий службы" in guide() and "references/scenarios.md" in guide()
 
 
+def test_multiple_documents_use_one_finish_and_reuse_case_facts() -> None:
+    section = guide().split("### Несколько документов", 1)[1].split("###", 1)[0]
+
+    for phrase in (
+        "aifa_doc(query=…)",
+        "aifa_open(doc_id=…)",
+        "до трёх целей",
+        "один `aifa_finish`",
+        "в текст задания",
+        "имена файлов",
+        "факты прошлых ходов",
+    ):
+        assert phrase in section
+
+
 def codes_table() -> list[tuple[str, str, str, str]]:
     """Строки таблицы `references/codes.md`: (код, инструменты, условие, действие)."""
     raw = (PLANNING / "references" / "codes.md").read_text(encoding="utf-8")

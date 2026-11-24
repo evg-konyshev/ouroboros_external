@@ -216,7 +216,7 @@ like) are skipped: those parts are not ported (non-goals in design).
 
 ## 5. Skill texts
 
-- [ ] 5.1 Update three skill texts. Run `scripts/resolve_rules.py` on each file first and read the
+- [x] 5.1 Update three skill texts. Run `scripts/resolve_rules.py` on each file first and read the
       rules it names.
       - `skills/aifa-planning/SKILL.md`, section «Несколько документов»: the listing and
         `aifa_doc(query)`; open only what the question needs; `doc_id` on calls; one move per
@@ -234,7 +234,7 @@ like) are skipped: those parts are not ported (non-goals in design).
 
 ## 6. Frontend and step A handover
 
-- [ ] 6.1 Add a toggle «Все документы папки» in `aifa/web/src/components/workspace/`. When on, the
+- [x] 6.1 Add a toggle «Все документы папки» in `aifa/web/src/components/workspace/`. When on, the
       body carries `scope: "all_workspace"` and `doc_ids: []`; when off, the body is unchanged. The
       answer shows the document names from `turn_documents`. Verify with vitest:
       - the request body in both states;

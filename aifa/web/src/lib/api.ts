@@ -1124,7 +1124,7 @@ export function chatStream(
 /** #84 C3-1: асинхронный контракт чата. Ход = фоновый прогон на сервере:
  * старт отдаёт run_id сразу, ответ дописывается независимо от браузера. */
 export async function startChatTurn(
-  body: Parameters<typeof chatStream>[0],
+  body: Parameters<typeof chatStream>[0] & { scope?: "all_workspace" },
 ): Promise<{
   schema_version: "1.0";
   event_schema_version: "1.0";
@@ -1138,7 +1138,8 @@ export async function startChatTurn(
     body: JSON.stringify({
       session_id: body.session_id ?? "",
       message: body.message,
-      doc_ids: body.doc_ids ?? [],
+      doc_ids: body.scope ? [] : body.doc_ids ?? [],
+      ...(body.scope ? { scope: body.scope } : {}),
       arch: body.arch ?? "",
       project_id: body.project_id ?? "",
       role: body.role ?? "",

@@ -214,3 +214,8 @@ def test_the_author_does_not_send_the_file_to_the_user_itself() -> None:
 
     assert "отдавать файл пользователю не нужно и нельзя" in body
     assert "`file_read` на таком файле пришлёт пользователю второй, непроверенный экземпляр" in body
+
+
+def test_the_author_routes_registration_and_reports_to_the_document_in_the_task() -> None:
+    assert "передавай его в `aifa_register_atom` и во все `aifa_report`" in step(1)
+    assert "`doc_id`" in step(1)

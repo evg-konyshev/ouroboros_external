@@ -75,6 +75,7 @@ export type ChatRun = {
  * С аргументами бэкенд зовёт тул НАПРЯМУЮ (детерминированно, без модели);
  * без аргументов — pin через tool_choice (модель обязана позвать этот тул). */
 export type SendOpts = {
+  scope?: "all_workspace";
   pinnedTool?: string;
   pinnedToolArgs?: Record<string, unknown>;
   /** Документы, которые пользователь ВИДИТ приложенными в композере. Страховка
@@ -945,6 +946,7 @@ export function useChatRun(
           session_id: p.session_id ?? "",
           message: text,
           doc_ids: docIdsForTurn,
+          scope: sendOpts?.scope,
           arch,
           // Чат внутри проекта скоупится на ПАПКУ — иначе не увидит её файлы.
           project_id: p.folder_id ?? p.id,

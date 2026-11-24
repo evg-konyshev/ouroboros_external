@@ -26,14 +26,14 @@ import {
 } from "@/components/workspace/use-doc-upload";
 import { ChatDotsMenu, useWorkspaceSafe } from "@/components/workspace/panes/files-in-chat";
 import { PlusMenu, SendControl } from "@/components/workspace/panes/composer-menus";
+import { TurnDocumentNames } from "@/components/workspace/panes/turn-document-names";
 import { cn } from "@/lib/utils";
 import { assistantAnswerLayout } from "@/lib/assistant-answer-layout";
 
 /**
  * Панель чата: живая переписка проекта. Сообщения пользователя — вправо на
  * подложке поверхности, ответы агента — текстом без рамки; время появляется при
- * наведении. Композер: «+» слева, «Отправить» справа, никаких переключателей
- * режима — навык выбирает агент сам.
+ * наведении. Композер: «+» слева, «Отправить» справа.
  *
  * Рантайм хода (отправка, поток, реаттач, «Стоп») живёт в useChatRun — панель
  * его только рисует. Рисуем ИМЕННО `run.project`, а не проп: страница читает
@@ -90,6 +90,7 @@ export function ChatPane({
   const messages = useMemo(() => live?.messages ?? [], [live?.messages]);
 
   const [draft, setDraft] = useState("");
+  const [folderScope, setFolderScope] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const atBottomRef = useRef(true);
   // Прикрепление файла из композера («+»): загрузка и статус живут в use-doc-upload,
@@ -149,7 +150,11 @@ export function ChatPane({
       .filter((i) => i.doc_id && i.stage !== "error" && i.stage !== "unknown")
       .map((i) => i.doc_id!);
     setDraft("");
-    void run.send(text, { ...opts, extraDocIds: chipDocIds });
+    void run.send(text, {
+      ...opts,
+      extraDocIds: chipDocIds,
+      scope: folderScope && !opts?.pinnedTool ? "all_workspace" : undefined,
+    });
   };
 
   // Документ для шорткатов: активный в рабочем экране, иначе первый в чате.
@@ -275,6 +280,14 @@ export function ChatPane({
             placeholder="Спросите про отчётность — агент найдёт цифру и покажет страницу"
             className="w-full resize-none bg-transparent px-2 py-1 text-[13px] outline-none placeholder:text-[var(--color-neutral-500)] disabled:cursor-not-allowed"
           />
+          <label className="ml-2 inline-flex items-center gap-2 text-[13px] text-[var(--color-neutral-700)]">
+            <input
+              type="checkbox"
+              checked={folderScope}
+              onChange={(event) => setFolderScope(event.target.checked)}
+            />
+            Все документы папки
+          </label>
           <div className="flex items-center justify-between pt-1">
             {/* «+» — меню настроек хода: файл, роль, поиск в интернете.
                 Неподключённое (модель, почта) показывается честно выключенным. */}
@@ -527,6 +540,7 @@ function AssistantRow({
   /** Прогон жив — догнать его ответ, НЕ запуская второй ход. */
   onReconnect: () => void;
 }) {
+  const docs = useWorkspaceSafe()?.docs;
   const hasFiles = (message.files?.length ?? 0) > 0;
   const hasTypedResults = (message.typedResults?.length ?? 0) > 0;
   const answerLayout = assistantAnswerLayout(message, Boolean(streaming));
@@ -601,6 +615,7 @@ function AssistantRow({
         <ExtractionBody message={message} extraction={extraction} />
       )}
       <TypedErrors errors={message.typedErrors ?? []} />
+      <TurnDocumentNames ids={message.turnDocumentIds} docs={docs} />
 
       {message.thinking && (
         <ThinkingLine text={message.thinking} since={message.created_at} />
