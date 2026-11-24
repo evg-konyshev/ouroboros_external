@@ -16,6 +16,7 @@ from finengine.assistant.ouro_view import Refusal
 from finengine.assistant.subtask_waits import SubtaskWaits
 from finengine.assistant.tool_call import BoundCall
 from finengine.config import settings
+from finengine.ingestion.document_store import get_store
 from finengine.skills.production_runtime import publish_result
 from finengine.skills.spec.dynamic_run import Rejection, decision_from_data
 
@@ -27,18 +28,41 @@ def no_loop(why: str = "") -> str:
     return ouro_view.refusal(Refusal.NO_LOOP, why or "Цикл не открыт: его открывает aifa_open.")
 
 
+def _document_exists(doc_id: str) -> bool:
+    return get_store().get_document(doc_id) is not None
+
+
+async def document_loop(desk: LoopDesk, call: BoundCall) -> OpenLoop | str | None:
+    doc_id = call.args.get("doc_id")
+    if "doc_id" in call.args and (not isinstance(doc_id, str) or not doc_id):
+        return ouro_view.refusal(Refusal.BAD_ARGUMENTS, "doc_id — непустой id документа.")
+    if doc_id is None:
+        opened = await desk.report_ids_of(call)
+        if len(opened) > 1:
+            return ouro_view.refusal(Refusal.BAD_ARGUMENTS, f"Укажи doc_id открытого цикла: {', '.join(opened)}.")
+        doc_id = opened[0] if opened else None
+    if doc_id is not None and (
+        doc_id not in call.record.doc_ids or not await asyncio.to_thread(_document_exists, doc_id)
+    ):
+        return ouro_view.refusal(Refusal.NO_DOCUMENT, "Документ отсутствует в ходе или удалён.")
+    return await desk.open_loop_of(call, doc_id)
+
+
 class ExclusiveTool:
     """Вызов, меняющий `LoopSession`: идёт по одному на ход, ожидание очереди входит в срок вызова (ADR-0043 п. 4)."""
 
     name = ""
     root_only = False
+    finish_turn = False
 
     def __init__(self, board: JobBoard, desk: LoopDesk) -> None:
         self._board = board
         self._desk = desk
 
     async def run(self, call: BoundCall) -> str:
-        loop = await self._desk.open_loop_of(call)
+        loop = await self._desk.open_loop_of(call) if self.finish_turn else await document_loop(self._desk, call)
+        if isinstance(loop, str):
+            return loop
         if loop is None:
             return no_loop()
         operation = None
@@ -63,7 +87,7 @@ class ExclusiveTool:
     async def _queued(self, loop: OpenLoop, args: dict[str, Any], operation: Operation | None = None) -> str:
         async with self._desk.queue_of(loop.run_id):
             try:
-                text = await asyncio.to_thread(self._execute, loop, args)
+                text = await asyncio.to_thread(self._execute_live, loop, args)
             except Exception as exc:
                 # Без записи итога повтор этого operation_id ждал бы результат, которого не будет.
                 if operation is not None:
@@ -72,6 +96,11 @@ class ExclusiveTool:
             if operation is not None:
                 await asyncio.to_thread(operation.finish, text)
             return text
+
+    def _execute_live(self, loop: OpenLoop, args: dict[str, Any]) -> str:
+        if not self.finish_turn and loop.doc_id is not None and not _document_exists(loop.doc_id):
+            return ouro_view.refusal(Refusal.NO_DOCUMENT, "Документ удалён.")
+        return self._execute(loop, args)
 
     def _execute(self, loop: OpenLoop, args: dict[str, Any]) -> str:
         raise NotImplementedError
@@ -122,6 +151,7 @@ class MoveTool(ExclusiveTool):
 class FinishTool(ExclusiveTool):
     name = "aifa_finish"
     root_only = True
+    finish_turn = True
 
     def __init__(self, board: JobBoard, desk: LoopDesk, subtasks: SubtaskWaits) -> None:
         super().__init__(board, desk)

@@ -154,7 +154,7 @@ like) are skipped: those parts are not ported (non-goals in design).
 - [x] 4.3 Loop limit 6 plus `Refusal.LOOPS_LIMIT = "лимит_циклов"`. Tests:
       - the 7th open → `ОТКАЗ лимит_циклов`, and the six still move;
       - market after report → `неверные_аргументы`, and report after market → the same.
-- [ ] 4.4 `doc_id` routing for `aifa_move`, `aifa_register_atom`, `aifa_report`, `aifa_atoms` and
+- [x] 4.4 `doc_id` routing for `aifa_move`, `aifa_register_atom`, `aifa_report`, `aifa_atoms` and
       `aifa_state` without artifact arguments, plus the plugin schemas. `aifa_wait(task_id)` uses
       the latest deadline. Each call checks the document still exists (D4, D8). Tests:
       - two loops and no `doc_id` → `неверные_аргументы` listing A and B. Neither loop's `turns`

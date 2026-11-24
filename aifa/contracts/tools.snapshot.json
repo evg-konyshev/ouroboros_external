@@ -1,8 +1,8 @@
 {
   "snapshot_version": 1,
   "adr": "ADR-0103",
-  "note": "Аргументы выбора отчёта и пагинации списка (ADR-0103, ADR-0104).",
-  "budget_chars": 6683,
+  "note": "Адресация инструментов цикла по документу и пагинация списка (ADR-0103, ADR-0104).",
+  "budget_chars": 6833,
   "tools": {
     "aifa_open": {
       "arguments": [
@@ -34,6 +34,7 @@
         "artifact_ids",
         "artifact_index",
         "artifact_offset",
+        "doc_id",
         "registry_offset",
         "view"
       ],
@@ -74,6 +75,7 @@
     "aifa_atoms": {
       "arguments": [
         "action",
+        "doc_id",
         "name",
         "offset"
       ],
@@ -87,6 +89,7 @@
     },
     "aifa_move": {
       "arguments": [
+        "doc_id",
         "files",
         "goals",
         "new_atoms",
@@ -107,6 +110,7 @@
     "aifa_register_atom": {
       "arguments": [
         "code",
+        "doc_id",
         "name",
         "output_schema",
         "output_type",
@@ -129,6 +133,7 @@
     "aifa_report": {
       "arguments": [
         "code",
+        "doc_id",
         "label",
         "note",
         "status"

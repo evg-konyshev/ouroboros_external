@@ -11,7 +11,7 @@ from typing import Any
 
 from finengine.assistant import ouro_view
 from finengine.assistant.loop_desk import LoopDesk, OpenLoop
-from finengine.assistant.loop_tools import ExclusiveTool, no_loop
+from finengine.assistant.loop_tools import ExclusiveTool, document_loop, no_loop
 from finengine.assistant.ouro_view import Refusal
 from finengine.assistant.subtask_waits import SubtaskWaits
 from finengine.assistant.tool_call import BoundCall
@@ -78,12 +78,16 @@ class ReportTool:
             return ouro_view.refusal(Refusal.BAD_ARGUMENTS, problem)
         label, note, code = str(raw_label), str(raw_note or ""), str(raw_code or "")
         run_id, task_id = call.ctx.run_id, str(call.ctx.task_id)
+        if status == "done" and call.is_root:
+            return ouro_view.refusal(Refusal.NOT_THE_ROLE, "aifa_report со status=done вызывает только подзадача.")
+        loop = await document_loop(self._desk, call)
+        if isinstance(loop, str):
+            return loop
         if status == "done":
-            if call.is_root:
-                return ouro_view.refusal(Refusal.NOT_THE_ROLE, "aifa_report со status=done вызывает только подзадача.")
+            if loop is None and "doc_id" in call.args:
+                return no_loop()
             self._subtasks.report_done(run_id, task_id, note or label)
             return f"{ouro_view.Code.READY}\nИтог принят: корень получит его в aifa_wait."
-        loop = await self._desk.open_loop_of(call)
         if loop is None:
             return no_loop()
         if not self._subtasks.count_report(run_id, task_id):

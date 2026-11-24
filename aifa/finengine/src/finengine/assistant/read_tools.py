@@ -16,7 +16,7 @@ from finengine.assistant import doc_pages, ouro_view
 from finengine.assistant.jobs import JobBoard
 from finengine.assistant.goal_tools import BEFORE_OPEN, OPEN_KIND
 from finengine.assistant.loop_desk import LoopDesk
-from finengine.assistant.loop_tools import no_loop
+from finengine.assistant.loop_tools import document_loop, no_loop
 from finengine.assistant.ouro_view import STATE_BATCH, Refusal
 from finengine.assistant.search_tool import _default_search
 from finengine.assistant.tool_call import BoundCall
@@ -75,7 +75,14 @@ class StateTool:
         offset = call.args.get("artifact_offset", 0)
         if "artifact_offset" in call.args and (type(offset) is not int or offset < 0 or not ids or len(ids) != 1 or view != "full"):
             return ouro_view.refusal(Refusal.BAD_ARGUMENTS, "artifact_offset требует один artifact_id, full и целое смещение >= 0")
-        loop = await self._desk.open_loop_of(call)
+        if ids or index is not None:
+            if "doc_id" in call.args:
+                return ouro_view.refusal(Refusal.BAD_ARGUMENTS, "Артефакты всего Case запрашиваются без doc_id.")
+            loop = await self._desk.open_loop_of(call)
+        else:
+            loop = await document_loop(self._desk, call)
+            if isinstance(loop, str):
+                return loop
         limit = settings.ouroboros_result_limit
         if registry_offset is not None:
             if loop is None:
@@ -159,10 +166,16 @@ class DocTool:
             return await asyncio.to_thread(_listing, call.record, offset, (query or "").strip())
         if doc_id not in call.record.doc_ids:
             return ouro_view.refusal(Refusal.NO_DOCUMENT, "Такого документа в этом ходе нет: список — aifa_doc без аргументов.")
-        text = await asyncio.to_thread(document_text, doc_id)
+        text = await asyncio.to_thread(_text_of_document, doc_id)
         if not text:
             return ouro_view.refusal(Refusal.NO_DOCUMENT, "Текст документа ещё не готов или не распознан: подожди и повтори.")
         return _reading(doc_id, text, pages, query)
+
+
+def _text_of_document(doc_id: str) -> str | None:
+    if get_store().get_document(doc_id) is None:
+        return None
+    return document_text(doc_id)
 
 
 def _listing(record: TurnRecord, offset: int, query: str) -> str:

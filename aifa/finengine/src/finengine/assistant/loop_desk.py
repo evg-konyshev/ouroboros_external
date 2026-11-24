@@ -107,6 +107,10 @@ class LoopDesk:
         index = state.get(state.LOOP_INDEX, owner=user_id, key=run_id) or {}
         return tuple(index.get("doc_ids", ()))
 
+    async def report_ids_of(self, call: BoundCall) -> tuple[str, ...]:
+        async with self._restoring:
+            return await asyncio.to_thread(self.report_ids, call.ctx.run_id, call.record.user_id)
+
     @staticmethod
     def _index_report(run_id: str, user_id: int | str, doc_id: str) -> None:
         state.mutate(

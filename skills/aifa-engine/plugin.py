@@ -68,6 +68,7 @@ TOOLS = (
         schema={
             "type": "object",
             "properties": {
+                "doc_id": {"type": "string"},
                 "registry_offset": {
                     "type": "integer",
                     "minimum": 0,
@@ -131,6 +132,7 @@ TOOLS = (
         schema={
             "type": "object",
             "properties": {
+                "doc_id": {"type": "string"},
                 "action": {"type": "string", "enum": ["list", "get"]},
                 "name": {"type": "string"},
                 "offset": {"type": "integer", "minimum": 0},
@@ -145,6 +147,7 @@ TOOLS = (
         schema={
             "type": "object",
             "properties": {
+                "doc_id": {"type": "string"},
                 "objective": {"type": "string"},
                 "reason": {"type": "string"},
                 "plan": {"type": "array", "items": {"type": "string"}},
@@ -252,6 +255,7 @@ TOOLS = (
         schema={
             "type": "object",
             "properties": {
+                "doc_id": {"type": "string"},
                 "name": {"type": "string"},
                 "purpose": {"type": "string"},
                 "requires": {
@@ -276,6 +280,7 @@ TOOLS = (
         schema={
             "type": "object",
             "properties": {
+                "doc_id": {"type": "string"},
                 "label": {"type": "string"},
                 "status": {"type": "string", "enum": ["ok", "error", "done"]},
                 "note": {"type": "string"},

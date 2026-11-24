@@ -186,8 +186,12 @@ class WaitTool:
     async def _subtask(self, call: BoundCall) -> str:
         """Срок подзадачи — от первого опроса и не дольше времени цикла; вне цикла — только срок (ADR-0044 п. 5)."""
         task_id = call.args["task_id"]
-        loop = await self._desk.open_loop_of(call)
-        cycle_ends_at = None if loop is None else loop.session.opened_at + loop.session.limits.max_wall_seconds
+        opened = await self._desk.report_ids_of(call)
+        cycles = [await self._desk.open_loop_of(call, doc_id) for doc_id in opened or (None,)]
+        cycle_ends_at = max(
+            (loop.session.opened_at + loop.session.limits.max_wall_seconds for loop in cycles if loop is not None),
+            default=None,
+        )
         try:
             waited = await self._subtasks.wait(
                 call.ctx.run_id, task_id, float(call.args["wait_sec"]), cycle_ends_at=cycle_ends_at

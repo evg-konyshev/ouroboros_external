@@ -12,7 +12,7 @@ from typing import Any
 
 from finengine.assistant import ouro_view
 from finengine.assistant.loop_desk import LoopDesk
-from finengine.assistant.loop_tools import no_loop
+from finengine.assistant.loop_tools import document_loop, no_loop
 from finengine.assistant.ouro_view import Refusal
 from finengine.assistant.tool_call import BoundCall
 from finengine.config import settings
@@ -23,7 +23,7 @@ from finengine.skills.spec.ephemeral import EphemeralAtom
 
 ACTIONS = ("list", "get")
 HEADER_NAMES = 20  # имён временных атомов в заголовке списка
-KNOWN_ARGUMENTS = frozenset({"action", "name", "offset"})
+KNOWN_ARGUMENTS = frozenset({"action", "name", "offset", "doc_id"})
 HEADER = (
     "Здесь поставляемые атомы, которые можно ставить в шаги, и временные атомы этого Case (область в карточке). "
     "Гейты проверок и служебные атомы в шаги не включаются: планировщик достраивает их сам. "
@@ -42,7 +42,9 @@ class AtomsTool:
         problem = _problem_in(call.args)
         if problem:
             return ouro_view.refusal(Refusal.BAD_ARGUMENTS, problem)
-        loop = await self._desk.open_loop_of(call)
+        loop = await document_loop(self._desk, call)
+        if isinstance(loop, str):
+            return loop
         if loop is None:
             return no_loop()
         offset = call.args.get("offset", 0)
@@ -113,7 +115,7 @@ def _problem_in(args: dict[str, Any]) -> str:
     """Что не так с аргументами `aifa_atoms`; пусто — всё так."""
     extra = sorted(set(args) - KNOWN_ARGUMENTS)
     if extra:
-        return f"Лишние аргументы: {', '.join(extra)}. Допустимы action, name, offset."
+        return f"Лишние аргументы: {', '.join(extra)}. Допустимы action, name, offset, doc_id."
     action = args.get("action")
     if action not in ACTIONS:
         return 'action — "list" (карточки всех атомов) или "get" (контракт и исходный код одного).'
