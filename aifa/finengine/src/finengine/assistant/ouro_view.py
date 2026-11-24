@@ -10,6 +10,7 @@ import json
 from enum import StrEnum
 
 from finengine.assistant.doc_pages import Match, Page
+from finengine.models.document import DocumentMeta
 from finengine.search.search import SearchHit
 from finengine.skills.spec.dynamic_run import (
     ARTIFACTS_HEADER,
@@ -361,10 +362,38 @@ def accepted(result: DynamicRunResult, *, reason: str = "", unfinished: list[str
     return "\n".join(lines)
 
 
-def documents(listed: list[tuple[str, str, int]]) -> str:
-    """Ответ `aifa_doc` без аргументов: документы хода (id, имя, число страниц)."""
-    lines = [f"{doc_id} | {name} | страниц: {pages}" for doc_id, name, pages in listed]
-    return f"{Code.READY}\n## Документы хода\ndoc_id | имя | страницы\n" + ("\n".join(lines) or "—")
+def documents(
+    listed: list[tuple[DocumentMeta, bool] | None], *, offset: int, total: int, limit: int,
+    ranking_unavailable: bool, fact_counts: dict[str, int],
+) -> str:
+    head = f"{Code.READY}\n## Документы хода\n"
+    if ranking_unavailable:
+        head += "ранжирование недоступно\n"
+    head += "doc_id | компания | страницы | файл | период | тип | язык | текст | факты Case\n"
+    lines = []
+    size = len(head) + len(f"\nnext_offset={max(total, offset)}") + 4
+    following = offset
+    for entry in listed:
+        if entry is not None:
+            meta, ready = entry
+            card = meta.meta_card
+            fields = (
+                meta.doc_id, card.get("issuer") or meta.company_name or "—",
+                f"страниц: {meta.text_pages}" if ready else "страниц: —",
+                meta.filename, card.get("period") or meta.period or "—",
+                card.get("doc_kind") or meta.doc_type.value, meta.language, "готов" if ready else "не готов",
+                f"фактов: {fact_counts.get(meta.doc_id, 0)}",
+            )
+            line = " | ".join(" ".join(str(field).replace("|", "¦").split()) for field in fields)
+            if size + len(line) + 1 > limit:
+                if not lines:
+                    return refusal(Refusal.BAD_ARGUMENTS, "Карточка документа не помещается в предел ответа.")
+                break
+            lines.append(line)
+            size += len(line) + 1
+        following += 1
+    next_offset = following if following < total else "null"
+    return head + ("\n".join(lines) or "—") + f"\nnext_offset={next_offset}"
 
 
 def doc_pages(doc_id: str, shown: list[Page], wanted: str, *, limit: int) -> str:

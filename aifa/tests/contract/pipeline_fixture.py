@@ -16,9 +16,12 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
+
+if TYPE_CHECKING:
+    from finengine.models.document import DocumentMeta
 
 AIFA = Path(__file__).resolve().parents[2]
 CLASSIFICATION = AIFA / "finengine" / "tests" / "golden" / "classification" / "cases.json"
@@ -46,16 +49,25 @@ def document_text() -> str:
     return str(next(c for c in cases if c["id"] == "cls-023")["excerpt"])
 
 
-@dataclass(frozen=True)
+@dataclass
 class FixtureStore:
     """Хранилище документов: документ хода принадлежит пользователю входа."""
 
-    def get_document(self, doc_id: str) -> Any:
+    text_pages: int | None = None
+
+    def get_document(self, doc_id: str) -> DocumentMeta | None:
+        from finengine.models.document import DocumentMeta
+
         if doc_id != DOC:
             return None
-        return SimpleNamespace(
-            owner_id=OWNER, filename="severstal-2024.pdf", company_name="Северсталь", meta_card=None
+        return DocumentMeta(
+            doc_id=doc_id, owner_id=OWNER, filename="severstal-2024.pdf", company_name="Северсталь",
+            text_pages=self.text_pages,
         )
+
+    def set_text_pages(self, doc_id: str, count: int, *, if_missing: bool = False) -> None:
+        if doc_id == DOC and (self.text_pages is None or not if_missing):
+            self.text_pages = count
 
 
 class NoOldChat:
@@ -153,6 +165,7 @@ def install(
     monkeypatch.setattr(config.settings, "redis_url", "")
     if not real_documents:
         monkeypatch.setattr(read_tools, "get_store", lambda: store)
+        monkeypatch.setattr(read_tools, "document_text_exists", lambda doc_id: doc_id == DOC)
         monkeypatch.setattr(app_main, "get_store", lambda: store)
         monkeypatch.setattr(
             "finengine.store.blobs.document_text",

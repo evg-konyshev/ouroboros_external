@@ -7,12 +7,17 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
-from loop_support import make_passport, open_cycle
-from test_dynamic_run import ExtractScenario, _move
+from loop_support import Gateway, make_passport, open_cycle
+from test_dynamic_run import ExtractScenario, _metric_for_period, _move
 from test_ephemeral_in_graph import CASE, OWNER
+from tool_harness import Plugin, ctx_of, open_run
 
 from finengine.assistant import read_tools
+from finengine.assistant.tool_api import ToolApi
 from finengine.contracts import DynamicArtifact, NodeKey
+from finengine.models.document import DocumentMeta
+from finengine.search.client import SearchUnavailable
+from finengine.search.search import DocumentScore
 
 LIMIT = 12_000
 DOC = "doc-1"
@@ -31,9 +36,17 @@ def code_of(reply: str) -> str:
 @pytest.fixture
 def documents(monkeypatch: pytest.MonkeyPatch) -> None:
     texts = {DOC: TEXT, "doc-long": "".join(f"===PAGE {n}===\n{'слово ' * 700}\n" for n in range(1, 6))}
+    metas = {
+        doc_id: DocumentMeta(doc_id=doc_id, filename=f"{doc_id}.pdf", company_name="ЛУКОЙЛ")
+        for doc_id in texts
+    }
     monkeypatch.setattr(read_tools, "document_text", lambda doc_id, **_: texts.get(doc_id))
+    monkeypatch.setattr(read_tools, "document_text_exists", texts.__contains__)
     monkeypatch.setattr(
-        read_tools, "get_store", lambda: SimpleNamespace(get_document=lambda doc_id: SimpleNamespace(company_name="ЛУКОЙЛ"))
+        read_tools, "get_store", lambda: SimpleNamespace(
+            get_document=metas.get,
+            set_text_pages=lambda doc_id, count, **_: setattr(metas[doc_id], "text_pages", count),
+        )
     )
 
 
@@ -148,14 +161,120 @@ async def test_the_list_of_ids_is_bounded_and_made_of_ids(base, ids) -> None:
     await cycle.close()
 
 
-async def test_documents_of_the_turn_are_listed_with_their_pages(base, documents) -> None:
+async def test_documents_of_the_turn_are_listed_with_their_pages(base, documents, monkeypatch) -> None:
     """LR-36, C3.6: без аргументов — документы хода (id, имя, число страниц)."""
     cycle = await open_cycle(base, doc_ids=(DOC,))
 
     reply = await cycle.call("aifa_doc")
 
     assert code_of(reply) == "ГОТОВО" and f"{DOC} | ЛУКОЙЛ | страниц: 3" in reply
+    assert read_tools.get_store().get_document(DOC).text_pages == 3
+    monkeypatch.setattr(read_tools, "document_text", _unexpected_text)
+    assert await cycle.call("aifa_doc") == reply
     await cycle.close()
+
+
+def _unexpected_text(*args, **kwargs):
+    raise AssertionError("Список уже знает число страниц")
+
+
+@pytest.mark.parametrize(("scope", "count"), [("all_workspace", 1), ("conversation", 30)])
+async def test_lists_documents_before_open(base, monkeypatch, scope, count):
+    docs = {
+        f"doc-{i:02d}": DocumentMeta(
+            doc_id=f"doc-{i:02d}", filename=f"Отчёт {i:02d}.pdf", company_name="Реестр",
+            meta_card={"issuer": "Компания", "period": "2024", "doc_kind": "Отчёт"},
+        )
+        for i in range(count)
+    }
+    for meta in list(docs.values())[1:]:
+        meta.text_pages = 3
+    monkeypatch.setattr(read_tools, "get_store", lambda: SimpleNamespace(get_document=docs.get))
+    monkeypatch.setattr(read_tools, "document_text_exists", lambda doc_id: doc_id != "doc-00")
+    monkeypatch.setattr(read_tools, "document_text", _unexpected_text)
+    run = open_run(user_id=OWNER, case_id=CASE, doc_ids=tuple(docs), scope=scope)
+    plugin = Plugin(ToolApi(Gateway(), None))
+    ctx = ctx_of(run.run_id)
+    try:
+        first = (await plugin.call("aifa_doc", ctx)).text
+        assert code_of(first) == "ГОТОВО"
+        assert "Отчёт 00.pdf" in first and "не готов" in first
+        assert "Компания" in first and "Реестр" not in first and "2024" in first
+        if count > 1:
+            offset = int(first.rsplit("next_offset=", 1)[1])
+            last = (await plugin.call("aifa_doc", ctx, {"offset": offset})).text
+            assert "doc-29" not in first and "doc-29" in last
+            assert last.endswith("next_offset=null")
+        assert code_of((await plugin.call("aifa_doc", ctx, {"doc_id": "doc-00"})).text) == "ОТКАЗ нет_цикла"
+    finally:
+        await plugin.close()
+        await run.end()
+
+
+@pytest.mark.parametrize(("scope", "workspace"), [("all_workspace", "folder"), ("conversation", None)])
+@pytest.mark.parametrize("unavailable", [False, True])
+async def test_ranks_the_turn_documents_before_open(base, monkeypatch, scope, workspace, unavailable):
+    doc_ids = ("first", "second", "third", "fourth")
+    docs = {doc_id: DocumentMeta(doc_id=doc_id, filename=f"{doc_id}.pdf") for doc_id in doc_ids}
+    monkeypatch.setattr(read_tools, "get_store", lambda: SimpleNamespace(get_document=docs.get))
+    monkeypatch.setattr(read_tools, "document_text_exists", lambda doc_id: False)
+    called = []
+
+    def select(ids, query, *, workspace_id):
+        called.append((ids, query, workspace_id))
+        if unavailable:
+            raise SearchUnavailable("test outage")
+        return [DocumentScore(doc_id, 1.0) for doc_id in ("third", "foreign", "first", "third")]
+
+    monkeypatch.setattr(read_tools, "_default_search", lambda *_args, **_kw: SimpleNamespace(select_documents=select), raising=False)
+    run = open_run(user_id=OWNER, case_id=CASE, doc_ids=doc_ids, scope=scope, workspace_id="folder")
+    plugin = Plugin(ToolApi(Gateway(), None))
+    try:
+        reply = (await plugin.call("aifa_doc", ctx_of(run.run_id), {"query": "ВТБ"})).text
+        assert code_of(reply) == "ГОТОВО"
+        assert called == [(list(doc_ids), "ВТБ", workspace)]
+        assert "foreign" not in reply
+        rows = [row.partition(" | ")[0] for row in reply.splitlines() if row.split(" | ")[0] in doc_ids]
+        assert rows == (list(doc_ids) if unavailable else ["third", "first", "second", "fourth"])
+        assert ("ранжирование недоступно" in reply) == unavailable
+    finally:
+        await plugin.close()
+        await run.end()
+
+
+async def test_listing_counts_metric_facts_of_the_active_version(base, monkeypatch):
+    metas = {
+        name: DocumentMeta(doc_id=name, filename=f"{name}.pdf", text_pages=3) for name in ("A", "B")
+    }
+    monkeypatch.setattr(read_tools, "get_store", lambda: SimpleNamespace(get_document=metas.get))
+    monkeypatch.setattr(read_tools, "document_text_exists", lambda doc_id: True)
+    monkeypatch.setattr(read_tools, "document_text", _unexpected_text)
+
+    base.ensure_case(owner_id=OWNER, case_id=CASE)
+    for doc_id, version in (("A", "old-a"), ("A", "new-a"), ("B", "new-b")):
+        base.register_document(
+            owner_id=OWNER, case_id=CASE, logical_name=doc_id, document_id=doc_id, document_version=version,
+        )
+    for version, facts in (
+        ("new-a", (_metric_for_period("FY 2024", 10), _metric_for_period("FY 2023", 8))),
+        ("old-a", (_metric_for_period("FY 2024", 4),)),
+    ):
+        base.store.put_artifact(
+            OWNER, CASE, node_key=NodeKey(atom_name="read.value", atom_version="1", args_fingerprint=version),
+            output_type="ExtractedMetric", payloads=facts, concept="SALES_REVENUE", entity_ref=None,
+            period_ref=None, basis=None, document_version=version, policy_version="test",
+        )
+    _put_dynamic(base, "note", {"text": "ещё один артефакт"})
+    run = open_run(user_id=OWNER, case_id=CASE, doc_ids=("A", "B"))
+    plugin = Plugin(ToolApi(Gateway(), None))
+    try:
+        reply = (await plugin.call("aifa_doc", ctx_of(run.run_id))).text
+        rows = {row.partition(" | ")[0]: row for row in reply.splitlines()}
+        assert "фактов: 2" in rows["A"]
+        assert "фактов: 0" in rows["B"]
+    finally:
+        await plugin.close()
+        await run.end()
 
 
 async def test_the_text_of_a_page_range_is_recognized_text(base, documents) -> None:

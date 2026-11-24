@@ -135,7 +135,7 @@ keys, gates.
 - the key is `f"{run_id}/{doc_id}"` for every report loop, whichever way it was resolved;
 - the market loop keeps `run_id`;
 - the opening claim key and the job kind (`aifa_open:<doc_id>`) follow the same rule;
-- the "after aifa_open" check in `read_tools.py` (and `aifa_search`) changes from an exact job kind
+- the "after aifa_open" check for text reads, artifacts, `aifa_search` and other listings changes from an exact job kind
   to "any job of kind `aifa_open` or `aifa_open:*` exists, or a loop of this turn is open";
 - `state.LOOP_INDEX key=run_id → [doc_id, …]` lists the opened report loops in order;
 - `_sweep` deletes the index and every `run_id/<doc_id>` loop state with `run_id`'s own key. The
@@ -191,8 +191,10 @@ keys, gates.
 
 ### D6. Listing from the registry, with stored page counts and ranked order
 
+- In an `all_workspace` turn or with several candidate documents, the listing and its ranking are
+  available before opening a loop, so the planner can choose the first `doc_id`.
 - The listing reads `get_document` metadata (the meta card before registry fields for company,
-  type and period) and `document_text_exists`. It does not load texts.
+  type and period) and `document_text_exists`. Text is read only for the legacy backfill below.
 - Page count: a new column `document.text_pages`.
   - Right after `save_document_text` in `_parse_doc_in_background`,
     `set_text_pages(doc_id, len(pages_of(text)))` writes it with a single-column UPDATE.

@@ -9,24 +9,29 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+from opensearchpy import OpenSearchException
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from finengine.assistant import doc_pages, ouro_view
 from finengine.assistant.jobs import JobBoard
-from finengine.assistant.goal_tools import OPEN_KIND
+from finengine.assistant.goal_tools import BEFORE_OPEN, OPEN_KIND
 from finengine.assistant.loop_desk import LoopDesk
 from finengine.assistant.loop_tools import no_loop
 from finengine.assistant.ouro_view import STATE_BATCH, Refusal
+from finengine.assistant.search_tool import _default_search
 from finengine.assistant.tool_call import BoundCall
+from finengine.assistant.turn_record import TurnRecord
 from finengine.config import settings
 from finengine.contracts import FileArtifact
 from finengine.contracts.base import result_id_of
 from finengine.ingestion.document_store import get_store
+from finengine.search.client import SearchUnavailable
+from finengine.search.embeddings import EmbeddingUnavailable
 from finengine.skills.spec.dynamic_run import artifact_content, case_rows
-from finengine.store.blobs import document_text
+from finengine.store.blobs import document_text, document_text_exists
 from finengine.store.cases import get_case_store
 
-BEFORE_OPEN = "Сначала вызови aifa_open: чтение доступно после него."
+DOCUMENT_BATCH = 20
 
 
 class ArtifactIndexQuery(BaseModel):
@@ -137,16 +142,21 @@ class DocTool:
         self._desk = desk
 
     async def run(self, call: BoundCall) -> str:
-        loop = await self._desk.open_loop_of(call)
-        if loop is None and self._board.of_kind(call.ctx.run_id, OPEN_KIND) is None:
-            return no_loop(BEFORE_OPEN)
         doc_id, pages, query = (call.args.get(key) for key in ("doc_id", "pages", "query"))
+        offset = call.args.get("offset", 0)
+        doc_ids = call.record.doc_ids
+        if doc_id or (call.record.scope != "all_workspace" and len(doc_ids) < 2):
+            loop = await self._desk.open_loop_of(call)
+            if loop is None and self._board.of_kind(call.ctx.run_id, OPEN_KIND) is None:
+                return no_loop(BEFORE_OPEN)
         if not all(item is None or isinstance(item, str) for item in (doc_id, pages, query)):
             return ouro_view.refusal(Refusal.BAD_ARGUMENTS, "doc_id, pages и query — строки.")
+        if type(offset) is not int or offset < 0 or (doc_id and "offset" in call.args):
+            return ouro_view.refusal(Refusal.BAD_ARGUMENTS, "offset — целое число от 0 для списка документов.")
         if not doc_id:
-            if pages or query:
-                return ouro_view.refusal(Refusal.BAD_ARGUMENTS, "pages и query нужны вместе с doc_id.")
-            return await asyncio.to_thread(_listing, call.record.doc_ids)
+            if pages:
+                return ouro_view.refusal(Refusal.BAD_ARGUMENTS, "pages нужен вместе с doc_id.")
+            return await asyncio.to_thread(_listing, call.record, offset, (query or "").strip())
         if doc_id not in call.record.doc_ids:
             return ouro_view.refusal(Refusal.NO_DOCUMENT, "Такого документа в этом ходе нет: список — aifa_doc без аргументов.")
         text = await asyncio.to_thread(document_text, doc_id)
@@ -155,13 +165,41 @@ class DocTool:
         return _reading(doc_id, text, pages, query)
 
 
-def _listing(doc_ids: tuple[str, ...]) -> str:
+def _listing(record: TurnRecord, offset: int, query: str) -> str:
+    doc_ids = record.doc_ids
+    ranking_unavailable = False
+    if query and doc_ids:
+        try:
+            search = _default_search(record, text_exists=document_text_exists)
+            workspace_id = record.workspace_id if record.scope == "all_workspace" else None
+            ranks = search.select_documents(list(doc_ids), query, workspace_id=workspace_id)
+        except (SearchUnavailable, EmbeddingUnavailable, OpenSearchException):
+            ranking_unavailable = True
+        else:
+            allowed = set(doc_ids)
+            doc_ids = tuple(dict.fromkeys([*(rank.document_id for rank in ranks if rank.document_id in allowed), *doc_ids]))
     listed = []
-    for doc_id in doc_ids:
-        meta = get_store().get_document(doc_id)
-        name = (getattr(meta, "company_name", "") or getattr(meta, "filename", "") or doc_id) if meta else doc_id
-        listed.append((doc_id, str(name), len(doc_pages.pages_of(document_text(doc_id) or ""))))
-    return ouro_view.documents(listed)
+    for doc_id in doc_ids[offset:offset + DOCUMENT_BATCH]:
+        store = get_store()
+        meta = store.get_document(doc_id)
+        if meta is None:
+            listed.append(None)
+            continue
+        ready = document_text_exists(doc_id)
+        if ready and meta.text_pages is None:
+            text = document_text(doc_id)
+            if text is None:
+                ready = False
+            else:
+                meta.text_pages = len(doc_pages.pages_of(text))
+                store.set_text_pages(doc_id, meta.text_pages, if_missing=True)
+        listed.append((meta, ready))
+    listed_ids = [entry[0].doc_id for entry in listed if entry is not None]
+    fact_counts = get_case_store().metric_fact_counts(record.user_id, record.case_id, listed_ids) if listed_ids else {}
+    return ouro_view.documents(
+        listed, offset=offset, total=len(doc_ids), limit=settings.ouroboros_result_limit,
+        ranking_unavailable=ranking_unavailable, fact_counts=fact_counts,
+    )
 
 
 def _reading(doc_id: str, text: str, pages: str | None, query: str | None) -> str:

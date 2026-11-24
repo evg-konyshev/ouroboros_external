@@ -24,7 +24,10 @@ and Case and runs the code. It is the last of three changes. It builds on `aifa-
   - The set is frozen in `TurnRecord` when the turn is created.
 - **Document listing and selection.**
   - `aifa_doc` without arguments returns registry metadata for each turn document (company,
-    period, type, language, pages, readiness) without loading texts, paged.
+    period, type, language, pages, readiness) paged. In a
+    multi-document turn or `all_workspace`, the listing is available before a loop opens.
+    For an older ready document with no stored page count, its first listing read computes and
+    stores the count.
   - `aifa_doc(query=…)` ranks the turn's documents with the selection of `aifa-document-search`:
     ranked ones first, then the rest. When search is down, it falls back to the plain listing.
 - **One loop per document, in the turn's Case.**

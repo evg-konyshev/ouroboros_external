@@ -14,6 +14,7 @@ from gigachat.exceptions import ResponseError
 from sqlalchemy import inspect, text
 
 import finengine.api.main as api
+from finengine.assistant.doc_pages import pages_of
 from finengine.auth.db import User
 from finengine.config import settings
 from finengine.models.document import DocumentMeta
@@ -225,6 +226,7 @@ def test_pymupdf_publishes_physical_page_numbers_for_search(
 
     published = document_text("pdf")
     assert published is not None
+    assert store.get_document("pdf").text_pages == len(pages_of(published)) == 2
     chunks = chunk_document("pdf", published)
     assert [(chunk.page, chunk.content.split()[0]) for chunk in chunks] == [
         (1, "First"),

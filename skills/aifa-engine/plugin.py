@@ -95,7 +95,12 @@ TOOLS = (
         description="Документы хода или распознанный текст документа по страницам либо поиском.",
         schema={
             "type": "object",
-            "properties": {"doc_id": {"type": "string"}, "pages": {"type": "string"}, "query": {"type": "string"}},
+            "properties": {
+                "doc_id": {"type": "string"},
+                "pages": {"type": "string"},
+                "query": {"type": "string"},
+                "offset": {"type": "integer", "minimum": 0},
+            },
         },
         capability_class="read_only",
     ),

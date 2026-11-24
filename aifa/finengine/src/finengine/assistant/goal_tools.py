@@ -29,6 +29,7 @@ from finengine.store import state
 WAIT_MIN_SEC = 10
 WAIT_MAX_SEC = 240
 OPEN_KIND = "aifa_open"
+BEFORE_OPEN = "Сначала вызови aifa_open: чтение доступно после него."
 
 
 class Opening(Protocol):

@@ -69,7 +69,9 @@
 [0098 — рыночный дайджест как сценарий службы, цикл без отчёта](0098-market-digest-scenario.md) (принято),
 [0099 — дайджест: выжимка в чате, выпуск карточкой, недоступное по просьбе](0099-dayjest-format-otveta.md) (принято),
 [0100 — dev на Cloud.ru, Chromium, контактный User-Agent для SEC](0100-dev-cloudru-chromium-edgar.md) (принято),
-[0102 — поиск по документам: OpenSearch и `aifa_search`](0102-document-search.md) (принято).
+[0102 — поиск по документам: OpenSearch и `aifa_search`](0102-document-search.md) (принято),
+[0103 — один ход AIFA по нескольким документам](0103-multi-document-turn.md) (принято),
+[0104 — список документов до открытия отчётного цикла](0104-document-list-before-open.md) (принято).
 
 | № | Решение | Статус |
 |---|---|---|

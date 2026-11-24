@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Any
+from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 
@@ -7,6 +7,7 @@ class QueryRequest(BaseModel):
     session_id: str = ""
     message: str
     doc_ids: list[str] = Field(default_factory=list)  # filter by specific docs
+    scope: Literal["conversation", "all_workspace"] = "conversation"
     # Selected agent arch in the UI ("aifa_baseline" / "finengine_baseline" /
     # …). The chat backend is shared (Finengine query_stream), but a few
     # arch-specific touches piggy-back on it — currently the AIFA Baseline

@@ -31,6 +31,7 @@ class DocumentMeta(BaseModel):
     period: str = ""  # e.g. "2024", "Q3 2024", "H1 2023"
     language: str = "ru"  # "ru" or "en"
     total_pages: int = 0
+    text_pages: int | None = Field(default=None, exclude=True)
     file_path: str = ""
     pdf_origin: str = ""  # "digital" | "scanned" | "mixed" | "" (unknown)
     # Which OCR backend produced the .txt sidecar:

@@ -1,8 +1,8 @@
 {
   "snapshot_version": 1,
-  "adr": "ADR-0102",
-  "note": "Двухстадийный поиск aifa_search с hybrid/lexical и деградированным ответом по опубликованным текстам.",
-  "budget_chars": 6608,
+  "adr": "ADR-0103",
+  "note": "Пагинация списка документов в aifa_doc (ADR-0103, ADR-0104).",
+  "budget_chars": 6653,
   "tools": {
     "aifa_open": {
       "arguments": [
@@ -45,6 +45,7 @@
     "aifa_doc": {
       "arguments": [
         "doc_id",
+        "offset",
         "pages",
         "query"
       ],

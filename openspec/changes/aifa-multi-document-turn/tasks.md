@@ -24,7 +24,7 @@ like) are skipped: those parts are not ported (non-goals in design).
 
 ## 1. Step A decision record
 
-- [ ] 1.1 Write ADR A (next free number, status «предложено»). It records D1–D8, D11–D15, the
+- [x] 1.1 Write ADR A (next free number, status «предложено»). It records D1–D8, D11–D15, the
       non-goals (including «no ouroboros core change»), and these changes:
       - `scope` in `POST /chat/turns`;
       - the `doc_id`/`offset` arguments;
@@ -53,12 +53,12 @@ like) are skipped: those parts are not ported (non-goals in design).
 
 ## 2. Turn scope and workspace
 
-- [ ] 2.1 `QueryRequest.scope` (`models/query.py`). New test `tests/test_turn_scope.py`:
+- [x] 2.1 `QueryRequest.scope` (`models/query.py`). New test `tests/test_turn_scope.py`:
       `POST /chat/turns` with `scope="everything"` → 422, with no `TurnRecord` remembered. Fails
       before: 200.
       - Producer/consumer: the route `chat_turn_start` → `turn_record.recall`.
       - Allowed fake: `composition.turn_gateway()`.
-- [ ] 2.2 Workspace derivation and the `all_workspace` branch in `_chat_turn_docs` (D7), plus
+- [x] 2.2 Workspace derivation and the `all_workspace` branch in `_chat_turn_docs` (D7), plus
       `scope` and `workspace_id` in `TurnRecord`, with a tolerant `recall`. Assertions in
       `tests/test_turn_scope.py`:
       - `project_id=F1` (own folder) with `all_workspace`, where F1 holds ready A and B and a
@@ -88,7 +88,7 @@ like) are skipped: those parts are not ported (non-goals in design).
 
 ## 3. Listing and ranked selection
 
-- [ ] 3.1 New column `document.text_pages` (start-up DDL), set right after `save_document_text`
+- [x] 3.1 New column `document.text_pages` (start-up DDL), set right after `save_document_text`
       by a single-column `set_text_pages`. The listing in
       `read_tools._listing`/`ouro_view.documents` reads:
       - registry and meta-card fields;
@@ -103,16 +103,19 @@ like) are skipped: those parts are not ported (non-goals in design).
         answers. Fails before: full texts are read.
       - the single-document page count equals `len(pages_of(text))`, the same number as before;
       - 30 documents → a next offset, then null;
-      - a never-parsed document shows not ready.
-- [ ] 3.2 Ranked `aifa_doc(query=…)` (D6). Tests, with a fake `select_documents` at the search
+      - a never-parsed document shows not ready;
+      - a multi-document or `all_workspace` turn lists its candidates before opening; reading
+        an individual document still requires an opening attempt;
+      - the first listing of a legacy ready document saves its page count, and the next uses it.
+- [x] 3.2 Ranked `aifa_doc(query=…)` (D6). Tests, with a fake `select_documents` at the search
       boundary:
-      - ranked documents come first in the fake's order, followed by the rest in set order;
+      - before opening, ranked documents come first in the fake's order, then the rest in set order;
       - an id the fake returns outside `record.doc_ids` is dropped;
       - the workspace is passed only for `all_workspace`;
       - the fake raising → the plain listing plus the "ранжирование недоступно" note.
 
       Fails before: refused with "pages и query нужны вместе с doc_id".
-- [ ] 3.3 Case facts in the listing (D14). Each entry states the number of metric facts of the
+- [x] 3.3 Case facts in the listing (D14). Each entry states the number of metric facts of the
       document's active version in the turn's Case, read from the Case artifact index by
       `document_version` in one query per page. Tests in `tests/loop_tools/test_read_tools.py`:
       - a Case with two facts of A and none of B → A's entry says 2, B's says 0. Fails before: no

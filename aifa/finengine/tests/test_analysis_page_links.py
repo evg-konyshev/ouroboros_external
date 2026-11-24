@@ -215,6 +215,9 @@ def test_idp_ocr_fills_total_pages():
         def add_document(self, m, _chunks):
             saved["meta"] = m
 
+        def set_text_pages(self, _doc_id, count):
+            saved["text_pages"] = count
+
     async def _fake_ocr(_path, save_raw_to=None, parallel=1):  # noqa: ARG001
         # 7 физических страниц, одна из которых не распозналась: нумерация
         # ленты идёт по ФАЙЛУ, поэтому здесь именно pages_total.
@@ -242,3 +245,4 @@ def test_idp_ocr_fills_total_pages():
     assert saved.get("meta") is not None, "метаданные документа не сохранились"
     assert saved["meta"].total_pages == 7, \
         "после облачного OCR документ по-прежнему без числа страниц"
+    assert saved["text_pages"] == 2

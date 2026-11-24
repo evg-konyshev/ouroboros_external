@@ -5,11 +5,10 @@ from collections.abc import Callable
 from typing import Protocol
 
 from finengine.assistant import ouro_view
-from finengine.assistant.goal_tools import OPEN_KIND
+from finengine.assistant.goal_tools import BEFORE_OPEN, OPEN_KIND
 from finengine.assistant.jobs import JobBoard
 from finengine.assistant.loop_desk import LoopDesk
 from finengine.assistant.loop_tools import no_loop
-from finengine.assistant.read_tools import BEFORE_OPEN
 from finengine.assistant.tool_call import BoundCall
 from finengine.assistant.turn_record import TurnRecord
 from finengine.auth.db import User
@@ -34,7 +33,7 @@ class SearchPort(Protocol):
 SearchFactory = Callable[[TurnRecord], SearchPort]
 
 
-def _default_search(record: TurnRecord) -> DocumentSearch:
+def _default_search(record: TurnRecord, *, text_exists: Callable[[str], bool] | None = None) -> DocumentSearch:
     user = User(
         id=record.user_id,
         username=record.owner_id,
@@ -45,6 +44,7 @@ def _default_search(record: TurnRecord) -> DocumentSearch:
         SearchIndex(settings.opensearch_url) if settings.opensearch_url else None,
         EmbeddingGateway.from_settings(settings),
         user,
+        text_exists=text_exists,
     )
 
 

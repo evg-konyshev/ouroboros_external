@@ -39,7 +39,7 @@ from collections.abc import Callable
 from typing import Any
 
 from sqlalchemy import (
-    JSON, Column, Integer, MetaData, String, Table, delete, func, inspect, select, text,
+    JSON, Column, Integer, MetaData, String, Table, delete, func, inspect, select, text, update,
 )
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
@@ -62,6 +62,7 @@ DOCUMENT = Table(
     Column("owner_id", Integer, nullable=False, default=0, index=True),
     Column("workspace_id", String(64), nullable=True, index=True),
     Column("index_state", String(256), nullable=True),
+    Column("text_pages", Integer, nullable=True),
     Column("meta", JSON, nullable=False),
 )
 
@@ -101,6 +102,7 @@ class SqlDocumentStore:
         # workspace_id добавлен позже: legacy-таблицы без колонки — обновить.
         self._ensure_workspace_column()
         self._ensure_index_state_column()
+        self._ensure_text_pages_column()
         # workspace создаётся той же базой; используем уже собранный движок.
         self._workspaces = WorkspaceStore(self._engine)
 
@@ -137,6 +139,13 @@ class SqlDocumentStore:
         ws_id = f"owner:{owner_id}"
         self._workspaces.upsert_workspace(owner_id=owner_id, workspace_id=ws_id, name="")
         return ws_id
+
+    def _ensure_text_pages_column(self) -> None:
+        with self._engine.begin() as conn:
+            if conn.dialect.name == "postgresql":
+                conn.execute(text("ALTER TABLE document ADD COLUMN IF NOT EXISTS text_pages INTEGER"))
+            elif "text_pages" not in {column["name"] for column in inspect(conn).get_columns("document")}:
+                conn.execute(text("ALTER TABLE document ADD COLUMN text_pages INTEGER"))
 
     def _existing_document(self, doc_id: str) -> tuple[int, str | None] | None:
         with self._engine.begin() as conn:
@@ -281,10 +290,22 @@ class SqlDocumentStore:
     def get_document(self, doc_id: str) -> DocumentMeta | None:
         with self._engine.begin() as conn:
             строка = conn.execute(
-                select(DOCUMENT.c.meta, DOCUMENT.c.workspace_id)
+                select(DOCUMENT.c.meta, DOCUMENT.c.workspace_id, DOCUMENT.c.text_pages)
                 .where(DOCUMENT.c.doc_id == doc_id)
             ).first()
-        return _to_meta(строка[0], строка[1]) if строка else None
+        if строка is None:
+            return None
+        raw, workspace_id, text_pages = строка
+        meta = _to_meta(raw, workspace_id)
+        meta.text_pages = text_pages
+        return meta
+
+    def set_text_pages(self, doc_id: str, count: int, *, if_missing: bool = False) -> None:
+        statement = update(DOCUMENT).where(DOCUMENT.c.doc_id == doc_id).values(text_pages=count)
+        if if_missing:
+            statement = statement.where(DOCUMENT.c.text_pages.is_(None))
+        with self._engine.begin() as conn:
+            conn.execute(statement)
 
     def update_document_meta(self, meta: DocumentMeta) -> None:
         """Заменить метаданные. Незарегистрированный doc_id — ничего не делаем.

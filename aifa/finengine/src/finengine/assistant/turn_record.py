@@ -36,6 +36,8 @@ class TurnRecord:
     trace_id: str = ""  # трасса хода (`X-Trace-Id` рукопожатия): её же получает комната станции
     web_search: bool = False
     is_admin: bool = False
+    scope: str = "conversation"
+    workspace_id: str = ""
 
 
 def _key(run_id: str) -> str:
@@ -50,7 +52,11 @@ def recall(run_id: str) -> TurnRecord | None:
     raw: dict[str, Any] | None = get_cache().get(_key(run_id))
     if raw is None:
         return None
-    return TurnRecord(**{**raw, "doc_ids": tuple(raw["doc_ids"])})
+    return TurnRecord(**{
+        **raw,
+        "doc_ids": tuple(raw["doc_ids"]),
+        "workspace_id": raw.get("workspace_id") or f"owner:{raw['user_id']}",
+    })
 
 
 def with_root(record: TurnRecord, task_id: str) -> TurnRecord:

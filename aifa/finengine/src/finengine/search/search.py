@@ -169,12 +169,15 @@ class DocumentSearch:
         embeddings: EmbeddingPort,
         user: User,
         text_reader: Callable[..., str | None] = document_text,
+        *,
+        text_exists: Callable[[str], bool] | None = None,
     ) -> None:
         self.store = store
         self.index = index
         self.embeddings = embeddings
         self.user = user
         self.text_reader = text_reader
+        self.text_exists = text_exists
 
     def _index(self) -> SearchIndex:
         if self.index is None:
@@ -198,6 +201,8 @@ class DocumentSearch:
         if meta is None or (workspace_id is not None and meta.workspace_id != workspace_id):
             return False
         try:
+            if self.text_exists is not None:
+                return self.text_exists(doc_id)
             return self.text_reader(doc_id, limit=1) is not None
         except _TEXT_READ_ERRORS:
             return False

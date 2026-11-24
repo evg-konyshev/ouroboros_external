@@ -18,7 +18,7 @@ from typing import Any
 from pydantic import BaseModel
 from sqlalchemy import (
     JSON, Boolean, Column, DateTime, Integer, MetaData, String, Table, UniqueConstraint,
-    and_, select, update,
+    and_, func, select, update,
 )
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
@@ -505,6 +505,27 @@ class SqlCaseStore:
             logical_name=r["logical_name"], document_id=r["document_id"],
             document_version=r["document_version"], active=True, added_at=r["added_at"],
         ) for r in rows]
+
+    def metric_fact_counts(self, owner_id: object, case_id: str, document_ids: Sequence[str]) -> dict[str, int]:
+        document = CASE_DOCUMENT.c
+        artifact = CASE_ARTIFACT.c
+        query = (
+            select(document.document_id, func.sum(func.json_array_length(artifact.payloads)))
+            .select_from(CASE_DOCUMENT.join(CASE_ARTIFACT, and_(
+                document.owner_key == artifact.owner_key,
+                document.case_id == artifact.case_id,
+                document.document_version == artifact.document_version,
+            )))
+            .where(
+                document.owner_key == owner_key(owner_id), document.case_id == case_id,
+                document.active.is_(True), document.document_id.in_(document_ids),
+                artifact.valid.is_(True),
+                artifact.output_type.in_(("ExtractedMetric", "CalculatedMetric", "UserProvidedMetric")),
+            )
+            .group_by(document.document_id)
+        )
+        with self._engine.begin() as conn:
+            return {doc_id: count for doc_id, count in conn.execute(query)}
 
     def put_artifact(
         self, owner_id: object, case_id: str, *, node_key: NodeKey, output_type: str,

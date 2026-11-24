@@ -578,8 +578,10 @@ def _parse_doc_in_background(
         # Публикация атомарна внутри хранилища: поллинг статуса и тул никогда
         # не увидят полу-записанный текст и не сочтут его готовым.
         from finengine.store.blobs import save_document_text  # noqa: PLC0415
+        from finengine.assistant.doc_pages import pages_of  # noqa: PLC0415
 
         save_document_text(doc_id, full_text)
+        get_store().set_text_pages(doc_id, len(pages_of(full_text)))
         # Stamp which backend produced this sidecar — useful for diag and
         # for the per-doc "Источник OCR" badge in the UI.
         try:
@@ -1292,13 +1294,33 @@ def _docs_of_the_turn(doc_ids: list[str], user: User) -> list[str]:
     return owned
 
 
-def _chat_turn_docs(request: QueryRequest, user: User, agent) -> list[str]:
+def _turn_workspace_id(project_id: str, user: User) -> str:
+    if project_id and any(
+        isinstance(folder, dict) and folder.get("id") == project_id
+        for folder in get_dialog_store().load(user.id).get("folders") or []
+    ):
+        workspace = get_store().workspace_store.get_workspace(project_id)
+        if workspace is not None and workspace["owner_id"] == user.id:
+            return project_id
+    return f"owner:{user.id}"
+
+
+def _chat_turn_docs(request: QueryRequest, user: User, agent, *, workspace_id: str = "") -> list[str]:
     """Единый owner-проверенный набор документов для обеих половин хода.
 
     Follow-up обычно не повторяет ``doc_ids``. Тогда источник — существующая
     Session агента. Новую Session здесь не создаём: настройка транспорта не
     должна менять состояние диалога.
     """
+    if request.scope == "all_workspace" and not request.pinned_tool:
+        docs = get_store().list_documents(
+            owner_id=user.id, workspace_id=workspace_id or _turn_workspace_id(request.project_id, user),
+        )
+        requested = set(request.doc_ids)
+        return _docs_of_the_turn(
+            [doc.doc_id for doc in docs if not requested or doc.doc_id in requested], user,
+        )
+
     candidate_docs = list(request.doc_ids or [])
     if not candidate_docs and request.session_id:
         candidate_docs = agent.session_doc_ids(
@@ -1554,7 +1576,9 @@ def _turn_started(run_id: str) -> dict:
     }
 
 
-def _start_ouroboros_turn(request: QueryRequest, user: User, doc_ids: list[str], active_doc_id: str) -> dict:
+def _start_ouroboros_turn(
+    request: QueryRequest, user: User, doc_ids: list[str], active_doc_id: str, workspace_id: str,
+) -> dict:
     """Ход чата через ouroboros (шаг 10): прогон создаётся здесь, ведёт его `turn_gateway` (CONTRACTS.md §1)."""
     from finengine.assistant import composition
     from finengine.assistant import session_turns
@@ -1584,6 +1608,7 @@ def _start_ouroboros_turn(request: QueryRequest, user: User, doc_ids: list[str],
         case_id=request.project_id or session_id, doc_ids=tuple(doc_ids), active_doc_id=active_doc_id,
         role=request.role or "", trace_id=trace_id,
         web_search=request.web_search, is_admin=user.is_admin,
+        scope=request.scope, workspace_id=workspace_id,
     ))
     # История сессии отбирается по её ходам (CONTRACTS.md §2.6): чат папки делят все её сессии.
     session_turns.record_turn(str(user.id), session_id, run_id=run_id, chat_id=chat_id)
@@ -1617,7 +1642,8 @@ async def chat_turn_start(request: QueryRequest, user: User = Depends(get_curren
     # `session_id` и реплику. Агент на таком ходу продолжает использовать
     # документы Session; nonce-скоуп обязан строиться из того же набора, иначе
     # после успешного OCR станция закономерно получает 403 по пустому пропуску.
-    _turn_docs = _chat_turn_docs(request, user, agent)
+    workspace_id = "" if request.pinned_tool else _turn_workspace_id(request.project_id, user)
+    _turn_docs = _chat_turn_docs(request, user, agent, workspace_id=workspace_id)
     _owned = set(_turn_docs)
     # Один набор для обеих половин хода: Session/evidence-gate и nonce-скоупа
     # станции. `request.doc_ids` здесь снова рассинхронизировал бы сохранённый
@@ -1627,7 +1653,7 @@ async def chat_turn_start(request: QueryRequest, user: User = Depends(get_curren
 
     # Шаг 10 (О3): ход ведёт ouroboros; внутри службы остаётся только детерминированный `pinned_tool`.
     if not request.pinned_tool:
-        return _start_ouroboros_turn(request, user, _owned_doc_ids, _owned_active)
+        return _start_ouroboros_turn(request, user, _owned_doc_ids, _owned_active, workspace_id)
 
     # #98 C3-2: гейтвей-петля хода. Явный эксперимент клиента (arch=aifa_gateway)
     # или глобальный флаг окружения. Кнопки с pinned_tool — всегда инлайн

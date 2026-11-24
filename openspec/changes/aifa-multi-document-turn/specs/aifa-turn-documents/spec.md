@@ -101,11 +101,17 @@ document outside the set, or one deleted since the turn began, SHALL be refused 
 
 ### Requirement: The document listing shows metadata without reading texts
 
-`aifa_doc` without arguments SHALL list the turn's documents, one entry per document, with
-`doc_id`, file name, company, period, document type, language, page count and whether its text is
-ready. It SHALL NOT load document texts. The page count SHALL equal the number of pages in the
-recognised text. The listing SHALL be paged by an `offset` in entries, with a next offset; a null
-next offset means the end.
+`aifa_doc` without `doc_id` SHALL list id, file name, company, period, type, language, page count
+and text readiness for each turn document. It SHALL use the stored count when present. If a
+ready document has no count, it SHALL read the recognised text, count its pages and save the
+count for future calls. It SHALL page by document entries using `offset`. A null next offset
+means the end.
+
+#### Scenario: Select the first loop
+
+- **WHEN** a turn has several candidate documents or uses `all_workspace` and no loop has opened
+- **THEN** `aifa_doc()` and `aifa_doc(query=…)` can list its documents before `aifa_open`
+- **AND** access to document text, `aifa_search` and Case artifact contents still requires an opening attempt
 
 #### Scenario: Listing a large set
 
