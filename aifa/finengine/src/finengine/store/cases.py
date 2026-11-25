@@ -18,7 +18,7 @@ from typing import Any
 from pydantic import BaseModel
 from sqlalchemy import (
     JSON, Boolean, Column, DateTime, Integer, MetaData, String, Table, UniqueConstraint,
-    and_, case, func, select, update,
+    and_, case, func, or_, select, update,
 )
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
@@ -505,6 +505,50 @@ class SqlCaseStore:
             logical_name=r["logical_name"], document_id=r["document_id"],
             document_version=r["document_version"], active=True, added_at=r["added_at"],
         ) for r in rows]
+
+    def comparison_inputs(
+        self, owner_id: object, case_id: str, ids: set[str],
+    ) -> tuple[list[tuple[Any, bool, str | None]], list[tuple[str, str]]]:
+        """Named metric facts and the active document index from one Case snapshot."""
+        owner = owner_key(owner_id)
+        artifact, override, document = CASE_ARTIFACT.c, OVERRIDE_EVENT.c, CASE_DOCUMENT.c
+        newer = OVERRIDE_EVENT.alias("newer").c
+        current_override = ~select(newer.event_id).where(
+            newer.owner_key == override.owner_key, newer.case_id == override.case_id,
+            newer.root_evidence_id == override.root_evidence_id, newer.case_revision > override.case_revision,
+        ).exists()
+        with self._engine.connect() as conn:
+            postgres = conn.dialect.name == "postgresql"
+            if postgres:
+                conn.execution_options(isolation_level="REPEATABLE READ")
+            with conn.begin():
+                if not postgres:
+                    conn.exec_driver_sql("BEGIN")
+                items = (
+                    func.json_array_elements_text(artifact.evidence_ids) if postgres
+                    else func.json_each(artifact.evidence_ids)
+                ).table_valued("value")
+                matches = select(items.c.value).where(items.c.value.in_(ids)).exists()
+                artifacts = conn.execute(select(artifact.payloads, artifact.valid, artifact.document_version).where(
+                    artifact.owner_key == owner, artifact.case_id == case_id,
+                    artifact.output_type.in_(("ExtractedMetric", "CalculatedMetric", "UserProvidedMetric")),
+                    or_(matches, func.json_array_length(artifact.evidence_ids) == 0),
+                )).all()
+                overrides = conn.execute(select(override.wrapper).where(
+                    override.owner_key == owner, override.case_id == case_id, override.wrapper.is_not(None),
+                    override.event["override_evidence_id"].as_string().in_(ids), current_override,
+                )).scalars().all()
+                active = conn.execute(select(document.document_version, document.document_id).where(
+                    document.owner_key == owner, document.case_id == case_id, document.active.is_(True),
+                )).all()
+        payloads: list[tuple[Any, bool, str | None]] = [
+            (_unpack_value(wrapper), True, None) for wrapper in overrides if wrapper
+        ]
+        payloads.extend(
+            (_unpack_value(payload), valid, version)
+            for values, valid, version in artifacts for payload in values
+        )
+        return payloads, [(version, doc_id) for version, doc_id in active]
 
     def metric_fact_counts(self, owner_id: object, case_id: str, document_ids: Sequence[str]) -> dict[str, int]:
         document = CASE_DOCUMENT.c

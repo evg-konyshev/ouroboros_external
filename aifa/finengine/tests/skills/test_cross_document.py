@@ -223,3 +223,54 @@ def test_cross_source_requires_distinct_categories_and_compares_each_company_ind
     result = compare(Preset.CROSS_SOURCE_VERIFICATION, [left, e_same, peer])
     assert all(row.status == "insufficient_sources" for row in result.rows)
     assert all(not row.figures for row in result.rows)
+
+
+def test_per_share_units_stay_per_share():
+    values = [
+        fact("a", "10", concept="EARNINGS_PER_SHARE", period="FY 2023", unit="руб/акция"),
+        fact("b", "12", concept="EARNINGS_PER_SHARE", unit="руб/акция"),
+    ]
+    (row,) = compare(Preset.RETROSPECTIVE, values).rows
+
+    assert [(f.value, f.unit) for f in row.facts] == [(10, "руб/акция"), (12, "руб/акция")]
+
+
+def test_latest_point_sets_period_shape_before_compatible_values_are_selected():
+    values = [
+        fact("a", "100", period="FY 2022"),
+        fact("b", "110", period="FY 2023"),
+        fact("c", "120", period="Q1 2025", unit="USD"),
+    ]
+    (row,) = compare(Preset.RETROSPECTIVE, values).rows
+
+    assert [f.artifact_id for f in row.facts] == ["c"]
+    assert not row.figures
+
+
+def test_peer_chooses_standard_before_reducing_equal_sources_to_one_company_value():
+    values = [
+        fact("a-rsbu", "100", standard="rsbu"),
+        fact("a-ifrs", "100"),
+        fact("v", "110", company="ВТБ"),
+        fact("g", "90", company="Газпром"),
+    ]
+    result = compare(Preset.PEER_COMPARISON, values)
+
+    assert {f.artifact_id for f in result.rows[0].facts} == {"a-ifrs", "v", "g"}
+    assert any(e.fact_id == "a-rsbu" and e.reason == "разные стандарты" for e in result.excluded)
+
+
+def test_cross_source_spreads_are_separate_for_each_company_and_basis():
+    values = [
+        fact("consolidated-report", "100"),
+        fact("consolidated-release", "106", source="release"),
+        fact("parent-report", "100", basis="parent"),
+        fact("parent-release", "200", basis="parent", source="release"),
+        fact("unknown-report", "100", company=""),
+        fact("unknown-release", "100", company="", source="release"),
+    ]
+    result = compare(Preset.CROSS_SOURCE_VERIFICATION, values)
+
+    assert len(result.rows) == 2
+    assert {row.facts[0].basis for row in result.rows} == {"consolidated", "parent"}
+    assert {item.fact_id for item in result.excluded} == {"unknown-report", "unknown-release"}

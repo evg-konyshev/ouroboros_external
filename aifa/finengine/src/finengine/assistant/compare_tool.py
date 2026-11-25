@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections import defaultdict
 from decimal import Decimal
 
 from finengine.assistant import ouro_view
@@ -65,22 +66,12 @@ def _document(meta: DocumentMeta) -> Document:
 def _answer(record: TurnRecord, preset: Preset, ids: set[str]) -> str:
     case_store = get_case_store()
     owner, case_id = record.user_id, record.case_id
-    active = {
-        row.document_version: row.document_id for row in case_store.active_documents(owner, case_id)
-    }
+    named, active_ids = case_store.comparison_inputs(owner, case_id, ids)
+    active: dict[str, set[str]] = defaultdict(set)
+    for active_version, doc_id in active_ids:
+        active[active_version].add(doc_id)
     doc_store = get_store()
-    documents = {
-        doc_id: _document(meta)
-        for doc_id in sorted(set(active.values()) | set(record.doc_ids))
-        if (meta := doc_store.get_document(doc_id)) is not None
-    }
-    # Overrides are in the Case audit trail even before any node consumes them.
-    overrides = tuple(case_store.active_overrides(owner, case_id).values())
-    rows = case_store.list_artifacts(owner, case_id, valid_only=False)
-    named = [(value, True, None) for value in overrides]
-    named.extend(
-        (value, row["valid"], row["document_version"]) for row in rows for value in row["payloads"]
-    )
+    documents: dict[str, Document] = {}
     found: dict[str, Fact] = {}
     excluded: dict[str, Exclusion] = {}
     for value, valid, row_version in named:
@@ -93,7 +84,14 @@ def _answer(record: TurnRecord, preset: Preset, ids: set[str]) -> str:
             amount, unit, period, basis, version = metric_value_unit_period(value)
         except ValueError:
             continue
-        document = documents.get(active.get(version or row_version or "", ""))
+        candidates = active.get(version or row_version or "", set())
+        if len(candidates) > 1:
+            excluded[fact_id] = Exclusion(fact_id, "версия относится к нескольким документам Case")
+            continue
+        doc_id = next(iter(candidates), "")
+        document = documents.get(doc_id)
+        if document is None and doc_id and (meta := doc_store.get_document(doc_id)) is not None:
+            documents[doc_id] = document = _document(meta)
         if document is None:
             excluded[fact_id] = Exclusion(
                 fact_id, "версия документа не активна в Case или документ удалён"
@@ -108,6 +106,9 @@ def _answer(record: TurnRecord, preset: Preset, ids: set[str]) -> str:
     rejected = tuple(excluded[fact_id] for fact_id in sorted(excluded.keys() - found.keys()))
     if len(found) < 2:
         return ouro_view.compare_no_inputs(missing, rejected, limit=settings.ouroboros_result_limit)
+    for doc_id in set(record.doc_ids) - documents.keys():
+        if (meta := doc_store.get_document(doc_id)) is not None:
+            documents[doc_id] = _document(meta)
     coverage = (documents[doc_id] for doc_id in record.doc_ids if doc_id in documents)
     result = compare(preset, found.values(), coverage)
     return ouro_view.compared(result, missing, rejected, limit=settings.ouroboros_result_limit)

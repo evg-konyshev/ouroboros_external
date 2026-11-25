@@ -129,7 +129,7 @@ def _normalise(fact: Fact) -> Fact:
     if fact.concept in _PERCENT_CONCEPTS and unit in {"×", "x", "ratio"}:
         return replace(fact, value=fact.value * 100, unit="%")
     currency = _currency_from_unit_text(unit)
-    if not currency:
+    if not currency or "/" in unit or " на акци" in unit or " per " in unit:
         return fact
     currency = "RUB" if currency == "руб." else currency
     machine_scale = _MACHINE_SCALES.get(unit.rpartition("_")[2])
@@ -151,7 +151,11 @@ def _compatible(
     for fact in facts:
         standard = (fact.document.standard or f"?{fact.document.doc_id}") if peer else ""
         groups[(*_unit_basis(fact), standard)].append(fact)
-    winner = min(groups, key=lambda key: (-len(groups[key]), key))
+    sizes = {
+        key: len({fact.document.company_key for fact in group}) if peer else len(group)
+        for key, group in groups.items()
+    }
+    winner = min(groups, key=lambda key: (-sizes[key], key))
     selected = tuple(groups[winner])
     excluded: list[Exclusion] = []
     for key, group in groups.items():
@@ -226,18 +230,26 @@ def _spread(
 def _cross_source(facts: Sequence[Fact]) -> tuple[list[Row], list[Exclusion]]:
     rows: list[Row] = []
     excluded: list[Exclusion] = []
-    grouped: dict[tuple[str, str, Period], list[Fact]] = defaultdict(list)
+    grouped: dict[tuple[str, str, Period, str], list[Fact]] = defaultdict(list)
     for fact in facts:
-        grouped[(fact.document.company_key, fact.concept, _period(fact))].append(fact)
-    for (_, concept, period), candidates in sorted(grouped.items()):
+        if not fact.document.company_key:
+            excluded.append(Exclusion(fact.artifact_id, "компания не установлена"))
+            continue
+        grouped[(fact.document.company_key, fact.concept, _period(fact), fact.basis)].append(fact)
+    for (_, concept, period, basis), candidates in sorted(grouped.items()):
         reference = candidates[0]
+        label = (
+            f"{reference.document.company_name} ({basis})"
+            if basis
+            else reference.document.company_name
+        )
         selected, omitted = _compatible(candidates)
         excluded.extend(omitted)
         if len({fact.document.doc_id for fact in selected}) < 2:
             status = "incompatible_unit" if omitted else "insufficient_sources"
             rows.append(
                 Row(
-                    reference.document.company_name,
+                    label,
                     concept,
                     reference.period,
                     tuple(candidates),
@@ -248,7 +260,7 @@ def _cross_source(facts: Sequence[Fact]) -> tuple[list[Row], list[Exclusion]]:
         if len({fact.document.source_type for fact in selected}) < 2:
             rows.append(
                 Row(
-                    reference.document.company_name,
+                    label,
                     concept,
                     reference.period,
                     selected,
@@ -267,7 +279,7 @@ def _cross_source(facts: Sequence[Fact]) -> tuple[list[Row], list[Exclusion]]:
             note = " · ".join(filter(None, [note, "Совпадения: " + "; ".join(agreements)]))
         rows.append(
             Row(
-                reference.document.company_name,
+                label,
                 concept,
                 reference.period,
                 selected,
@@ -293,12 +305,14 @@ def _peer(facts: Sequence[Fact]) -> tuple[list[Row], list[Row], list[Exclusion]]
     excluded: list[Exclusion] = []
     for (concept, _), candidates in sorted(groups.items()):
         label = candidates[0].period
+        selected, omitted = _compatible(candidates, peer=True)
+        excluded.extend(omitted)
         by_company: dict[str, list[Fact]] = defaultdict(list)
-        for fact in candidates:
+        for fact in selected:
             by_company[fact.document.company_key].append(fact)
         gaps.extend(
             Row(companies[key], concept, label)
-            for key in sorted(companies.keys() - by_company.keys())
+            for key in sorted(companies.keys() - {fact.document.company_key for fact in candidates})
         )
         points = []
         for sources in by_company.values():
@@ -312,10 +326,8 @@ def _peer(facts: Sequence[Fact]) -> tuple[list[Row], list[Row], list[Exclusion]]
         if not points:
             rows.append(Row("Компании", concept, label, status="source_conflict"))
             continue
-        selected, omitted = _compatible(points, peer=True)
-        excluded.extend(omitted)
         ordered = sorted(
-            selected, key=lambda fact: (-fact.value, fact.document.company_name, fact.artifact_id)
+            points, key=lambda fact: (-fact.value, fact.document.company_name, fact.artifact_id)
         )
         ids = tuple(fact.artifact_id for fact in ordered)
         ranks = (
@@ -329,7 +341,8 @@ def _peer(facts: Sequence[Fact]) -> tuple[list[Row], list[Row], list[Exclusion]]
             if len(ordered) > 1
             else ()
         )
-        rows.append(Row("Компании", concept, label, tuple(ordered), ranks))
+        note = "Для сравнения нужны факты хотя бы двух компаний." if len(companies) < 2 else ""
+        rows.append(Row("Компании", concept, label, tuple(ordered), ranks, note=note))
     return rows, sorted(gaps, key=lambda row: (row.label, row.concept, row.period)), excluded
 
 
@@ -400,6 +413,10 @@ def _retrospective(facts: Sequence[Fact]) -> tuple[list[Row], list[Exclusion]]:
     rows: list[Row] = []
     excluded: list[Exclusion] = []
     for (_, concept), candidates in sorted(grouped.items()):
+        known = [period for fact in candidates if (period := _period(fact)).kind]
+        if known:
+            shape = max(known).span
+            candidates = [fact for fact in candidates if _period(fact).span == shape]
         compatible, omitted = _compatible(candidates)
         excluded.extend(omitted)
         by_period: dict[Period, list[Fact]] = defaultdict(list)
@@ -415,10 +432,6 @@ def _retrospective(facts: Sequence[Fact]) -> tuple[list[Row], list[Exclusion]]:
                 )
             else:
                 points.append((period, value))
-        known = [period for period in by_period if period.kind]
-        if known:
-            shape = max(known).span
-            points = [point for point in points if point[0].span == shape]
         note = f"Расхождения за периоды: {', '.join(conflicts)}" if conflicts else ""
         rows.append(
             Row(

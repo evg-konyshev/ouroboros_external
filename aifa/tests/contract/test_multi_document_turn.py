@@ -9,6 +9,12 @@ import httpx
 import pipeline_fixture as fixture
 import pytest
 from engine_host import running_engine
+from finengine.contracts import ExtractedMetric, NodeKey, ScalarFact
+from finengine.contracts.case import CaseIdentity
+from finengine.ingestion.document_store import get_store
+from finengine.models.document import DocumentMeta
+from finengine.store.blobs import save_document_text
+from finengine.store.cases import get_case_store
 from test_chat_turn_end_to_end import kind_of, screen_events
 from test_loop_end_to_end import TOOL
 
@@ -32,10 +38,7 @@ async def test_the_folder_turn_lists_opens_and_finishes_two_reports(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from finengine.ingestion.document_store import get_store
-    from finengine.models.document import DocumentMeta
-    from finengine.store.blobs import save_document_text
-
+    """C3.12–C3.15 through the real document registry, tools and stream."""
     docs = ("multidoc-a", "multidoc-b")
     outside = "outside-folder"
     stub.use_scenario(
@@ -95,12 +98,7 @@ async def test_the_planner_compares_existing_case_facts_before_opening_a_report(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from finengine.contracts import ExtractedMetric, NodeKey, ScalarFact
-    from finengine.contracts.case import CaseIdentity
-    from finengine.ingestion.document_store import get_store
-    from finengine.models.document import DocumentMeta
-    from finengine.store.cases import get_case_store
-
+    """C3.16 reads named prior Case facts through the real plugin without opening."""
     args = {"preset": "peer_comparison", "artifact_ids": ["e-sber", "e-vtb"]}
     stub.use_scenario(
         {

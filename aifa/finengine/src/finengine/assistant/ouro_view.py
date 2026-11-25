@@ -513,7 +513,7 @@ def _compare_rows(
         size += len(line) + 1
     skipped = rows[len(kept):]
     note = f"Не показано строк: {len(skipped)}."
-    names = ", ".join(dict.fromkeys(name for name, _ in skipped))
+    names = ", ".join(dict.fromkeys(_table_row((name,)) for name, _ in skipped))
     available = limit - size - len(note) - 2
     if available > 1:
         note += " " + (names if len(names) <= available else names[:available - 1] + "…")

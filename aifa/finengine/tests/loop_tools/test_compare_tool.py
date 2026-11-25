@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 
 from loop_support import Gateway
+from sqlalchemy import event
 from test_ephemeral_in_graph import CASE
 from tool_harness import Plugin, ctx_of, first_line, open_run
 
@@ -12,6 +13,7 @@ from finengine.assistant.tool_api import ToolApi
 from finengine.config import settings
 from finengine.contracts import DynamicArtifact, ExtractedMetric, NodeKey, ScalarFact
 from finengine.models.document import DocumentMeta
+from finengine.store.cases import SqlCaseStore
 from finengine.store.documents import SqlDocumentStore
 
 
@@ -163,3 +165,62 @@ async def test_case_comparison_uses_meta_and_profile_outside_queue_even_before_o
     finally:
         await plugin.close()
         await run.end()
+
+
+async def test_a_shared_content_version_is_not_arbitrarily_attributed(base, tmp_path, monkeypatch):
+    _documents(tmp_path, monkeypatch, base)
+    base.ensure_case(owner_id=OWNER, case_id=CASE)
+    for doc_id in ("s", "v"):
+        _register(base, CASE, doc_id, "same-content")
+    _metric(base, "shared", "same-content", value=100)
+    run = open_run(user_id=OWNER, case_id=CASE, doc_ids=("s", "v"))
+    plugin = Plugin(ToolApi(Gateway(), None))
+    try:
+        reply = await plugin.call(
+            "aifa_compare",
+            ctx_of(run.run_id),
+            {
+                "preset": "peer_comparison",
+                "artifact_ids": ["shared", "absent"],
+            },
+        )
+        assert first_line(reply) == "ОТКАЗ нет_входов"
+        assert "shared | версия относится к нескольким документам Case" in reply.text
+    finally:
+        await plugin.close()
+        await run.end()
+
+
+def test_named_facts_and_versions_share_a_postgres_snapshot(base, бд):
+    store = SqlCaseStore(бд)
+    base.store = store
+    base.ensure_case(owner_id=OWNER, case_id=CASE)
+    _register(base, CASE, "s", "s1")
+    _metric(base, "e1", "s1", value=100)
+    _metric(base, "unrelated", "s1", value=900)
+    interrupted = False
+
+    def replace_between_reads(conn, cursor, statement, parameters, context, executemany):
+        nonlocal interrupted
+        if not interrupted and statement.lstrip().startswith(
+            "SELECT analysis_case_artifact.payloads"
+        ):
+            interrupted = True
+            _register(base, CASE, "s", "s2")
+            _metric(base, "e2", "s2", value=110)
+
+    event.listen(store._engine, "after_cursor_execute", replace_between_reads)
+    try:
+        facts, active = store.comparison_inputs(OWNER, CASE, {"e1", "e2"})
+        assert interrupted
+        assert [
+            (fact.scalar_fact.evidence_id, valid, version) for fact, valid, version in facts
+        ] == [
+            ("e1", True, "s1"),
+        ]
+        assert active == [("s1", "s")]
+        current, active = store.comparison_inputs(OWNER, CASE, {"e1", "e2"})
+        assert {fact.scalar_fact.evidence_id for fact, _, _ in current} == {"e1", "e2"}
+        assert active == [("s2", "s")]
+    finally:
+        event.remove(store._engine, "after_cursor_execute", replace_between_reads)
