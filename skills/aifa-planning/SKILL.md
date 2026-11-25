@@ -53,7 +53,7 @@ type: instruction
 - Справочники: `references/scenarios.md` — сценарии; `references/external-data.md` — данные вне отчёта;
   `references/new-atom.md` — новый атом; `references/atoms.md` — снимок каталога и `references/metrics.md` — общие
   показатели реестра: оба — только при проверке плана, до заказа не читай; `references/artifacts.md` — результаты,
-  расчёты, недостача. Остальные — по мере нужды.
+  расчёты, недостача. Остальные — по мере нужды, не все подряд.
 
 ### Несколько документов
 

@@ -241,7 +241,7 @@ like) are skipped: those parts are not ported (non-goals in design).
       - the names render from a fixture event.
 
       `npm test` green.
-- [ ] 6.2 Run `aifa/scripts/check.sh` and paste the result. Get an independent `/code-review` in a
+- [x] 6.2 Run `aifa/scripts/check.sh` and paste the result. Get an independent `/code-review` in a
       clean context (`docs/INVARIANTS.md` for `skills/aifa-*`, `REVIEW_GUIDE.md`). Add
       `PROGRESS.md` entries. Verify: no open blockers.
 
@@ -319,8 +319,8 @@ like) are skipped: those parts are not ported (non-goals in design).
 
 ## 9. Verification and handover
 
-- [ ] 9.1 Run `aifa/scripts/check.sh` and paste the result, comparing with the baseline.
-- [ ] 9.2 Get an independent `/code-review` of the step B diff in a clean context, citing
+- [x] 9.1 Run `aifa/scripts/check.sh` and paste the result, comparing with the baseline.
+- [x] 9.2 Get an independent `/code-review` of the step B diff in a clean context, citing
       file:line. Verify: no open blockers in the review file.
 - [ ] 9.3 Live check on aifa-sym (only on the owner's «выкатывай»; prod untouched). Verify each
       outcome and record it in `PROGRESS.md` §3:
@@ -337,5 +337,5 @@ like) are skipped: those parts are not ported (non-goals in design).
         turn's fact ids, and no move on Сбербанк's report;
       - a turn with a subtask atom among two loops → the subtask's calls carry `doc_id`;
       - a single-report turn → the same as before.
-- [ ] 9.4 Add `PROGRESS.md` §1/§3/§4 entries and run `graphify update .`. Verify: the entries
+- [x] 9.4 Add `PROGRESS.md` §1/§3/§4 entries and run `graphify update .`. Verify: the entries
       exist, and the rebuild exits 0.
