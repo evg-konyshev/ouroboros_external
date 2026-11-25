@@ -318,3 +318,12 @@ def test_retrospective_does_not_build_growth_across_documents_of_unknown_issuers
 
     assert {row.label for row in result.rows} == {"a.pdf", "b.pdf"}
     assert all(not row.figures for row in result.rows)
+
+
+def test_peer_does_not_rank_a_report_with_an_unknown_issuer():
+    values = [fact("unknown", "90", company=""), fact("known", "100")]
+    result = compare(Preset.PEER_COMPARISON, values)
+
+    assert [f.artifact_id for f in result.rows[0].facts] == ["known"]
+    assert not result.rows[0].figures
+    assert [e.fact_id for e in result.excluded] == ["unknown"]

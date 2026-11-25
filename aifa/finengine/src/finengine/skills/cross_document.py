@@ -328,13 +328,17 @@ def _one_value(facts: Sequence[Fact]) -> Fact | None:
 
 
 def _peer(facts: Sequence[Fact]) -> tuple[list[Row], list[Row], list[Exclusion]]:
-    companies = {fact.document.company_key: fact.document.company_name for fact in facts}
+    companies: dict[str, str] = {}
+    excluded: list[Exclusion] = []
     groups: dict[tuple[str, Period], list[Fact]] = defaultdict(list)
     for fact in facts:
+        if not fact.document.company_key:
+            excluded.append(Exclusion(fact.artifact_id, "компания не установлена"))
+            continue
+        companies[fact.document.company_key] = fact.document.company_name
         groups[(fact.concept, _period(fact))].append(fact)
     rows: list[Row] = []
     gaps: list[Row] = []
-    excluded: list[Exclusion] = []
     for (concept, _), candidates in sorted(groups.items()):
         label = candidates[0].period
         selected, omitted = _compatible(candidates, peer=True)
