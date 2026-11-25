@@ -508,18 +508,20 @@ async def test_snapshot_write_failure_does_not_consume_an_open_slot(registry, mo
 
     def fail_once(kind, *, owner, key, doc):
         nonlocal failed
-        if kind == state.LOOP_SESSION and key.endswith(f"/{B}") and not failed:
+        if kind == state.LOOP_SESSION and key.endswith(f"/{DOC}") and not failed:
             failed = True
             raise OSError("snapshot write interrupted")
         put(kind, owner=owner, key=key, doc=doc)
 
     monkeypatch.setattr(state, "put", fail_once)
     try:
-        assert first_line(await plugin.call("aifa_open", ctx, {"doc_id": DOC})) == "ГОТОВО"
-        assert (await plugin.call("aifa_open", ctx, {"doc_id": B})).status_code == 500
-        assert desk.report_ids(run.run_id, OWNER) == (DOC,)
+        assert (await plugin.call("aifa_open", ctx, {"doc_id": DOC})).status_code == 500
+        assert desk.report_ids(run.run_id, OWNER) == ()
         assert first_line(await plugin.call("aifa_open", ctx, {"doc_id": B})) == "ГОТОВО"
-        assert desk.report_ids(run.run_id, OWNER) == (DOC, B)
+        deadline = desk.report_deadline(run.run_id, OWNER)
+        assert first_line(await plugin.call("aifa_open", ctx, {"doc_id": DOC})) == "ГОТОВО"
+        assert desk.report_ids(run.run_id, OWNER) == (B, DOC)
+        assert desk.report_deadline(run.run_id, OWNER) == deadline
     finally:
         await plugin.close()
         await run.end()

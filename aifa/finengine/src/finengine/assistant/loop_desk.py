@@ -153,11 +153,12 @@ class LoopDesk:
 
     @staticmethod
     def _index_report(run_id: str, user_id: int | str, doc_id: str, deadline: float) -> None:
+        opened = LoopDesk.report_ids(run_id, user_id)
         state.mutate(
             state.LOOP_INDEX, owner=user_id, key=run_id,
             изменить=lambda current: {
                 **(current or {}),
-                "doc_ids": list(dict.fromkeys([*(current or {}).get("doc_ids", ()), doc_id])),
+                "doc_ids": [*opened, doc_id],
                 "deadline": deadline,
             },
         )
