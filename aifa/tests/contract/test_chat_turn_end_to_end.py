@@ -128,21 +128,25 @@ async def test_the_model_saw_the_planning_skill_and_the_table_of_results(
     # Тело навыка ouroboros держит в защищённом разделе системного сообщения, а не в ответе
     # `skill_read`.
     second_round = json.dumps(asked[1]["messages"], ensure_ascii=False)
-    assert "Правила корневой задачи" in second_round, "корень прочитал навык до вызова инструмента"
+    assert "# Расчёты по финансовым отчётам" in second_round, (
+        "корень прочитал навык до вызова инструмента"
+    )
     assert GOAL_TOOL in asked[0]["tools"], (
         "инструмент `aifa_open` в первом запросе (F4 на живом ouroboros)"
     )
-    # В `OUROBOROS_ENABLED_TOOLS` девять имён, зарегистрированы все девять (ADR-0064).
+    # Первый запрос получает полный набор инструментов `aifa-engine` из конфигурации dev.
     assert sorted(t for t in asked[0]["tools"] if "aifa-engine" in t) == [
         GOAL_TOOL.replace("aifa_open", name)
         for name in (
             "aifa_atoms",
+            "aifa_compare",
             "aifa_doc",
             "aifa_finish",
             "aifa_move",
             "aifa_open",
             "aifa_register_atom",
             "aifa_report",
+            "aifa_search",
             "aifa_state",
             "aifa_wait",
         )
