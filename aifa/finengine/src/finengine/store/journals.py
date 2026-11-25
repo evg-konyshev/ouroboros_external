@@ -224,8 +224,8 @@ def get_journal_store() -> JournalStore:
     return хранилище
 
 
-def append(kind: str, *, owner: Any, key: Any, entry: dict) -> None:
-    """Дописать запись. Никогда не бросает наружу — журнал не ломает ход.
+def append(kind: str, *, owner: Any, key: Any, entry: dict, required: bool = False) -> None:
+    """Дописать запись. Для подтверждаемого итога ошибка видна вызывающему.
 
     Молчать про отказ нельзя (тогда пропажу следов не с чем связать), но и
     ронять из-за него ход — тем более: пользователь потеряет ответ из-за
@@ -235,6 +235,8 @@ def append(kind: str, *, owner: Any, key: Any, entry: dict) -> None:
     try:
         get_journal_store().append(kind, o, k, entry)
     except Exception as e:  # noqa: BLE001 — журнал не имеет права уронить ход
+        if required:
+            raise
         log.warning("журнал %s: запись %s/%s не легла: %s", kind, o, k, e)
 
 

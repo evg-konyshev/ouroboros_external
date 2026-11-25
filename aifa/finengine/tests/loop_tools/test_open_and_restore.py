@@ -27,8 +27,9 @@ from finengine.assistant.tool_api import ToolApi
 from finengine.config import settings
 from finengine.ingestion.document_store import get_store
 from finengine.models.document import DocumentMeta
+from finengine.skills import run_orchestrator
 from finengine.skills.spec.dynamic_run import LoopSession
-from finengine.store import blobs, state
+from finengine.store import blobs, journals, state
 from finengine.store.documents import SqlDocumentStore
 
 CHAT = "p-lukoil"
@@ -293,9 +294,8 @@ async def test_finish_after_an_interrupted_snapshot_write_publishes_once(saved_p
         await after.close()
 
 
-async def test_finish_waits_for_run_owner_to_acknowledge_its_event_batch(saved_pair, monkeypatch):
-    from finengine.skills import run_orchestrator
-
+@pytest.mark.parametrize("ack_failure", [False, True])
+async def test_finish_waits_for_run_owner_to_acknowledge_its_event_batch(saved_pair, monkeypatch, ack_failure):
     run, plugin, ctx, _, _ = saved_pair
     before = run_orchestrator.get_run(run.run_id)
     sent = []
@@ -305,11 +305,45 @@ async def test_finish_waits_for_run_owner_to_acknowledge_its_event_batch(saved_p
         sent.append(payload["cmd"])
         return tell(run_id, payload)
 
+    cache = run_orchestrator.get_cache()
+    set_entry = cache.set
+    interrupted = False
+
+    def fail_ack_once(key, value, ttl_sec):
+        nonlocal interrupted
+        if ack_failure and key.endswith(":batch:aifa_finish") and not interrupted:
+            interrupted = True
+            raise OSError("ack temporarily unavailable")
+        return set_entry(key, value, ttl_sec)
+
     with monkeypatch.context() as remote:
         remote.setattr(run_orchestrator, "get_run", lambda _: None)
         remote.setattr(run_orchestrator, "tell_run", command)
+        remote.setattr(cache, "set", fail_ack_once)
         assert first_line(await plugin.call("aifa_finish", ctx, {"action": "give_up"})) == "ПРИНЯТО"
 
-    assert sent == ["emit_batch"]
+    assert sent == ["emit_batch"] * (2 if ack_failure else 1)
     assert [event["type"] for event in before.events].count("turn_documents") == 1
     assert state.get(state.LOOP_INDEX, owner=OWNER, key=run.run_id)["closed"]
+
+
+async def test_finish_retries_a_failed_journal_write_without_duplicating_events(saved_pair, monkeypatch):
+    run, plugin, ctx, _, _ = saved_pair
+    owner = run_orchestrator.get_run(run.run_id)
+    journal = journals.get_journal_store()
+    append = journal.append
+    interrupted = False
+
+    def fail_once(kind, owner_key, key, entry):
+        nonlocal interrupted
+        if entry.get("type") == "turn_documents" and not interrupted:
+            interrupted = True
+            raise OSError("journal unavailable")
+        return append(kind, owner_key, key, entry)
+
+    monkeypatch.setattr(journal, "append", fail_once)
+    first = await plugin.call("aifa_finish", ctx, {"action": "give_up"})
+    assert first.status_code == 500
+    assert state.get(state.LOOP_INDEX, owner=OWNER, key=run.run_id)["finishing"]
+    assert first_line(await plugin.call("aifa_finish", ctx, {"action": "give_up"})) == "ПРИНЯТО"
+    assert [event["type"] for event in owner.events].count("turn_documents") == 1

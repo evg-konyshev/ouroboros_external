@@ -96,7 +96,7 @@ _ВЛАДЕЛЕЦ = "_"
 _FILE_LOCK = threading.Lock()
 
 
-def append_event(run_id: str, kind: str, event: dict) -> None:
+def append_event(run_id: str, kind: str, event: dict, *, required: bool = False) -> None:
     """Дописать событие в журнал прогона. Отказ журнала не роняет прогон.
 
     🔴 ЖУРНАЛ ПЕРЕЕХАЛ С ТОМА В ОБЩЕЕ ХРАНИЛИЩЕ (26.08.2026). Пока он был
@@ -111,7 +111,7 @@ def append_event(run_id: str, kind: str, event: dict) -> None:
     """
     from finengine.store import journals  # noqa: PLC0415
 
-    journals.append(вид_журнала(kind), owner=_ВЛАДЕЛЕЦ, key=run_id, entry=event)
+    journals.append(вид_журнала(kind), owner=_ВЛАДЕЛЕЦ, key=run_id, entry=event, required=required)
 
 
 # ── Per-run state ─────────────────────────────────────────────────────────
@@ -145,13 +145,15 @@ class RunState:
         и по нему подписчик на чужой реплике отбрасывает то, что уже прочитал
         из журнала.
         """
-        if event_key and event_key in self._sent_event_keys:
-            return
+        if event_key:
+            if event_key in self._sent_event_keys:
+                return
+            append_event(self.run_id, self.kind, event, required=True)
+            self._sent_event_keys.add(event_key)
         self.seq += 1
         self.events.append(event)
-        append_event(self.run_id, self.kind, event)
-        if event_key:
-            self._sent_event_keys.add(event_key)
+        if not event_key:
+            append_event(self.run_id, self.kind, event)
         for q in list(self.observers):
             try:
                 q.put_nowait(event)
@@ -367,12 +369,15 @@ async def emit_run_batch(run_id: str, batch_id: str, events: list[dict]) -> None
         return
     cache = get_cache()
     key = _batch_ack_key(run_id, batch_id)
-    if await asyncio.to_thread(cache.get, key):
-        return
-    if not tell_run(run_id, {"cmd": "emit_batch", "batch_id": batch_id, "events": events}):
-        raise RuntimeError("Владелец прогона недоступен")
+    command = {"cmd": "emit_batch", "batch_id": batch_id, "events": events}
     async with asyncio.timeout(5):
+        next_send = 0.0
         while not await asyncio.to_thread(cache.get, key):
+            now = time.monotonic()
+            if now >= next_send:
+                if not tell_run(run_id, command):
+                    raise RuntimeError("Владелец прогона недоступен")
+                next_send = now + 1.0
             await asyncio.sleep(0.05)
 
 
@@ -443,9 +448,12 @@ async def _слушать_команды(state: "RunState") -> None:
                 if isinstance(событие, dict):
                     state.emit(событие)
             if приказ == "emit_batch" and not state.finished:
-                batch_id, events = сообщение["batch_id"], сообщение["events"]
-                _emit_batch(state, batch_id, events)
-                await asyncio.to_thread(get_cache().set, _batch_ack_key(state.run_id, batch_id), True, 600)
+                try:
+                    batch_id, events = сообщение["batch_id"], сообщение["events"]
+                    _emit_batch(state, batch_id, events)
+                    await asyncio.to_thread(get_cache().set, _batch_ack_key(state.run_id, batch_id), True, 600)
+                except Exception:  # noqa: BLE001 — отправитель повторит неподтверждённый пакет
+                    log.warning("пакет итога прогона %s остался без подтверждения", state.run_id[:8], exc_info=True)
             обработчик = state.commands.get(str(приказ))
             if обработчик is not None and not state.finished:
                 обработчик(сообщение)
