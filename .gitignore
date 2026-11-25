@@ -85,5 +85,7 @@ state/
 HANDOFF.md
 .venv*
 
-graphify-out/
+# AI Agents and skills
+.agents/
 data/
+graphify-out/
