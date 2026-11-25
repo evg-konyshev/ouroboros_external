@@ -35,6 +35,20 @@ _RATIO_CONCEPTS = _PERCENT_CONCEPTS | {"CURRENT_RATIO", "RATIO_NET_DEBT_EBITDA"}
 _RELATIVE_THRESHOLD = Decimal("0.05")
 _BENCHMARK_THRESHOLD = Decimal("0.01")
 _POINT_THRESHOLD = Decimal(1)
+_SOURCE_KINDS = {
+    "отчетность": "report",
+    "отчет": "report",
+    "ifrs_report": "report",
+    "rsbu_report": "report",
+    "пресс-релиз": "release",
+    "релиз": "release",
+    "press_release": "release",
+    "презентация": "presentation",
+    "транскрипт": "transcript",
+    "таблица": "excel",
+    "прочее": "",
+    "other": "",
+}
 _MACHINE_SCALES = {"k": "0.001", "th": "0.001", "mln": "1", "bln": "1000", "trn": "1000000"}
 
 
@@ -126,6 +140,10 @@ def _percent(fact: Fact) -> bool:
 
 def _normalise(fact: Fact) -> Fact:
     unit = fact.unit.strip().lower()
+    if unit == "коп./акция":
+        return replace(fact, value=fact.value / 100, unit="руб/акция")
+    if unit == "%":
+        return replace(fact, unit="%")
     if fact.concept in _PERCENT_CONCEPTS and unit in {"×", "x", "ratio"}:
         return replace(fact, value=fact.value * 100, unit="%")
     currency = _currency_from_unit_text(unit)
@@ -144,6 +162,18 @@ def _unit_basis(fact: Fact) -> tuple[str, str]:
     return fact.unit, fact.basis
 
 
+def _group_companies(facts: Sequence[Fact]) -> dict[str, list[Fact]]:
+    groups: dict[str, list[Fact]] = defaultdict(list)
+    for fact in facts:
+        groups[fact.document.company_key].append(fact)
+    return groups
+
+
+def _source_kind(source: str) -> str:
+    key = source.strip().casefold().replace("ё", "е")
+    return _SOURCE_KINDS.get(key, key)
+
+
 def _compatible(
     facts: Sequence[Fact], *, peer: bool = False
 ) -> tuple[tuple[Fact, ...], list[Exclusion]]:
@@ -152,7 +182,9 @@ def _compatible(
         standard = (fact.document.standard or f"?{fact.document.doc_id}") if peer else ""
         groups[(*_unit_basis(fact), standard)].append(fact)
     sizes = {
-        key: len({fact.document.company_key for fact in group}) if peer else len(group)
+        key: sum(_one_value(company) is not None for company in _group_companies(group).values())
+        if peer
+        else len(group)
         for key, group in groups.items()
     }
     winner = min(groups, key=lambda key: (-sizes[key], key))
@@ -257,7 +289,7 @@ def _cross_source(facts: Sequence[Fact]) -> tuple[list[Row], list[Exclusion]]:
                 )
             )
             continue
-        if len({fact.document.source_type for fact in selected}) < 2:
+        if len({_source_kind(fact.document.source_type) for fact in selected} - {""}) < 2:
             rows.append(
                 Row(
                     label,
@@ -307,9 +339,7 @@ def _peer(facts: Sequence[Fact]) -> tuple[list[Row], list[Row], list[Exclusion]]
         label = candidates[0].period
         selected, omitted = _compatible(candidates, peer=True)
         excluded.extend(omitted)
-        by_company: dict[str, list[Fact]] = defaultdict(list)
-        for fact in selected:
-            by_company[fact.document.company_key].append(fact)
+        by_company = _group_companies(selected)
         gaps.extend(
             Row(companies[key], concept, label)
             for key in sorted(companies.keys() - {fact.document.company_key for fact in candidates})
@@ -409,7 +439,8 @@ def _trend(points: list[tuple[Period, Fact]], *, conflicted: bool) -> tuple[Figu
 def _retrospective(facts: Sequence[Fact]) -> tuple[list[Row], list[Exclusion]]:
     grouped: dict[tuple[str, str], list[Fact]] = defaultdict(list)
     for fact in facts:
-        grouped[(fact.document.company_key, fact.concept)].append(fact)
+        company = fact.document.company_key or f"document:{fact.document.doc_id}"
+        grouped[(company, fact.concept)].append(fact)
     rows: list[Row] = []
     excluded: list[Exclusion] = []
     for (_, concept), candidates in sorted(grouped.items()):
@@ -435,7 +466,7 @@ def _retrospective(facts: Sequence[Fact]) -> tuple[list[Row], list[Exclusion]]:
         note = f"Расхождения за периоды: {', '.join(conflicts)}" if conflicts else ""
         rows.append(
             Row(
-                candidates[0].document.company_name,
+                candidates[0].document.company_name or candidates[0].document.filename,
                 concept,
                 "",
                 tuple(fact for _, fact in points),

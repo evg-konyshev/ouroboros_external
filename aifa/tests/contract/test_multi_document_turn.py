@@ -107,8 +107,16 @@ async def test_the_planner_compares_existing_case_facts_before_opening_a_report(
                 {"id": "title", "when": {"model": "stub-light"}, "reply": {"text": "Сравнение"}},
                 _call(1, "aifa_compare", args),
                 {
+                    **_call(2, "aifa_compare", args),
+                    "when": {
+                        "model": "stub-main",
+                        "round": 2,
+                        "last_tool_result_starts_with": "СБОЙ_СЛУЖБЫ",
+                    },
+                },
+                {
                     "id": "answer",
-                    "when": {"model": "stub-main", "round": 2},
+                    "when": {"model": "stub-main", "last_tool_result_starts_with": "ГОТОВО"},
                     "reply": {"text": "Готово."},
                 },
             ],
@@ -178,7 +186,10 @@ async def test_the_planner_compares_existing_case_facts_before_opening_a_report(
 
     assert events[-1]["status"] == "succeeded"
     asked = [entry for entry in stub.journal() if entry["model"] == "stub-main"]
-    assert [entry["rule"] for entry in asked] == ["1-aifa_compare", "answer"]
+    assert [entry["rule"] for entry in asked] in (
+        ["1-aifa_compare", "answer"],
+        ["1-aifa_compare", "2-aifa_compare", "answer"],
+    )
     result = asked[-1]["last_tool_result"]
     assert result.startswith("ГОТОВО\n")
     assert "Сбербанк | Сбербанк.pdf" in result and "100 | RUB млн | [e-sber]" in result

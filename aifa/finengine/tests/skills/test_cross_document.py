@@ -274,3 +274,47 @@ def test_cross_source_spreads_are_separate_for_each_company_and_basis():
     assert len(result.rows) == 2
     assert {row.facts[0].basis for row in result.rows} == {"consolidated", "parent"}
     assert {item.fact_id for item in result.excluded} == {"unknown-report", "unknown-release"}
+
+
+def test_source_type_is_compared_by_category_not_label_language():
+    values = [fact("report", "100", source="ifrs_report"), fact("card", "105", source="отчётность")]
+    (row,) = compare(Preset.CROSS_SOURCE_VERIFICATION, values).rows
+
+    assert row.status == "insufficient_sources"
+    assert not row.figures
+
+
+def test_peer_selects_the_largest_usable_cohort_after_conflicting_points_are_removed():
+    values = [
+        fact("a1", "100"),
+        fact("a2", "200"),
+        fact("b", "100", company="ВТБ"),
+        fact("c", "100", company="Газпром", standard="rsbu"),
+        fact("d", "105", company="Северсталь", standard="rsbu"),
+    ]
+    (row,) = compare(Preset.PEER_COMPARISON, values).rows
+
+    assert {f.artifact_id for f in row.facts} == {"c", "d"}
+    assert len(row.figures) == 2
+
+
+def test_kopecks_per_share_and_rubles_per_share_use_the_same_scale():
+    values = [
+        fact("report", "1", concept="EARNINGS_PER_SHARE", unit="руб/акция"),
+        fact("rel", "100", concept="EARNINGS_PER_SHARE", unit="коп./акция", source="release"),
+    ]
+    (row,) = compare(Preset.CROSS_SOURCE_VERIFICATION, values).rows
+
+    assert row.status == "agreement"
+    assert all(f.value == 1 and f.unit == "руб/акция" for f in row.facts)
+
+
+def test_retrospective_does_not_build_growth_across_documents_of_unknown_issuers():
+    values = [
+        fact("a", "100", company="", period="FY 2023"),
+        fact("b", "120", company="", period="FY 2024"),
+    ]
+    result = compare(Preset.RETROSPECTIVE, values)
+
+    assert {row.label for row in result.rows} == {"a.pdf", "b.pdf"}
+    assert all(not row.figures for row in result.rows)
