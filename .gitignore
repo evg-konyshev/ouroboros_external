@@ -86,3 +86,4 @@ HANDOFF.md
 .venv*
 
 graphify-out/
+data/
