@@ -291,3 +291,25 @@ async def test_finish_after_an_interrupted_snapshot_write_publishes_once(saved_p
         assert report_frames == [{"type": "turn_documents", "document_ids": [DOC, SECOND]}]
     finally:
         await after.close()
+
+
+async def test_finish_waits_for_run_owner_to_acknowledge_its_event_batch(saved_pair, monkeypatch):
+    from finengine.skills import run_orchestrator
+
+    run, plugin, ctx, _, _ = saved_pair
+    before = run_orchestrator.get_run(run.run_id)
+    sent = []
+    tell = run_orchestrator.tell_run
+
+    def command(run_id, payload):
+        sent.append(payload["cmd"])
+        return tell(run_id, payload)
+
+    with monkeypatch.context() as remote:
+        remote.setattr(run_orchestrator, "get_run", lambda _: None)
+        remote.setattr(run_orchestrator, "tell_run", command)
+        assert first_line(await plugin.call("aifa_finish", ctx, {"action": "give_up"})) == "ПРИНЯТО"
+
+    assert sent == ["emit_batch"]
+    assert [event["type"] for event in before.events].count("turn_documents") == 1
+    assert state.get(state.LOOP_INDEX, owner=OWNER, key=run.run_id)["closed"]

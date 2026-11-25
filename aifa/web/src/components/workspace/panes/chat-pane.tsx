@@ -89,17 +89,19 @@ export function ChatPane({
   }, [setChatRun, run.streaming, run.send]);
   const messages = useMemo(() => live?.messages ?? [], [live?.messages]);
   const [folderFiles, setFolderFiles] = useState<DocumentSummary[]>([]);
-  const needsFolderFiles = messages.some((message) => message.role === "assistant" &&
-    message.turnDocumentIds?.some((id) => !ws?.docs.some((doc) => doc.doc_id === id) &&
-      !folderFiles.some((doc) => doc.doc_id === id)));
+  const answerDocs = [...(ws?.docs ?? []), ...folderFiles];
+  const knownIds = new Set(answerDocs.map((doc) => doc.doc_id));
+  const missingIds = [...new Set(messages.flatMap((message) =>
+    message.role === "assistant" ? message.turnDocumentIds ?? [] : [],
+  ))].filter((id) => !knownIds.has(id)).sort().join(",");
   useEffect(() => {
-    if (!needsFolderFiles) return;
+    if (!missingIds) return;
     let active = true;
     void listDocuments().then((files) => {
       if (active) setFolderFiles(files);
     }).catch(() => {});
     return () => { active = false; };
-  }, [live?.id, needsFolderFiles]);
+  }, [live?.id, missingIds]);
 
   const [draft, setDraft] = useState("");
   const [scopeChatId, setScopeChatId] = useState<string | null>(null);
@@ -238,7 +240,7 @@ export function ChatPane({
               <AssistantRow
                 key={m.id}
                 message={m}
-                docs={folderFiles.length ? folderFiles : ws?.docs}
+                docs={answerDocs}
                 projectId={live?.id ?? ""}
                 // Ход ЖИВ — это состояние ПРОГОНА, а не подписки и не текста
                 // (жалобы Nate 19.08 п.4-6 и 31.08). При обрыве SSE сторож

@@ -17,7 +17,7 @@ from finengine.assistant.subtask_waits import SubtaskWaits
 from finengine.assistant.tool_call import BoundCall
 from finengine.config import settings
 from finengine.ingestion.document_store import get_store
-from finengine.skills.run_orchestrator import emit_to_run
+from finengine.skills.run_orchestrator import emit_run_batch
 from finengine.skills.production_runtime import publish_result
 from finengine.skills.spec.dynamic_run import Rejection, decision_from_data
 
@@ -186,8 +186,7 @@ class FinishTool(ExclusiveTool):
 
     async def _publish_staged(self, run_id: str, user_id: int | str, result: dict[str, Any]) -> str:
         await asyncio.to_thread(self._desk.close_reports, run_id, user_id, tuple(result["doc_ids"]))
-        for number, event in enumerate(result["events"]):
-            emit_to_run(run_id, event, event_key=f"aifa_finish:{number}")
+        await emit_run_batch(run_id, "aifa_finish", result["events"])
         await asyncio.to_thread(self._desk.finish_committed, run_id, user_id)
         return str(result["reply"])
 

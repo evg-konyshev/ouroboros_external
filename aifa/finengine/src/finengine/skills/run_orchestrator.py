@@ -60,6 +60,7 @@ from pathlib import Path
 from typing import Any, AsyncGenerator, Awaitable, Callable, Iterable
 
 from finengine.config import settings
+from finengine.store.cache import get_cache
 
 log = logging.getLogger(__name__)
 
@@ -332,7 +333,7 @@ def list_active(kind: str | None = None) -> list[str]:
     ]
 
 
-def emit_to_run(run_id: str, event: dict, *, event_key: str = "") -> bool:
+def emit_to_run(run_id: str, event: dict) -> bool:
     """#98 C3-2: эмит события в живой ран ИЗВНЕ его раннера.
 
     Прогресс-мост: тулы, исполняемые через /internal/tools/call (петля у
@@ -343,7 +344,7 @@ def emit_to_run(run_id: str, event: dict, *, event_key: str = "") -> bool:
     if state is not None:
         if state.finished:
             return False
-        state.emit(event, event_key=event_key)
+        state.emit(event)
         return True
 
     # 🔴 ПРОГОН ЧУЖОЙ — ПРОСИМ ВЛАДЕЛЬЦА, А НЕ ПИШЕМ САМИ. Журнал у прогона
@@ -354,8 +355,34 @@ def emit_to_run(run_id: str, event: dict, *, event_key: str = "") -> bool:
     запись = состояние_прогона(run_id)
     if запись is None or запись.get("finished"):
         return False
-    _команда(run_id, {"cmd": "emit", "event": event, "event_key": event_key})
+    _команда(run_id, {"cmd": "emit", "event": event})
     return True
+
+
+async def emit_run_batch(run_id: str, batch_id: str, events: list[dict]) -> None:
+    """Wait for the live run owner to apply an idempotent terminal batch."""
+    local = get_run(run_id)
+    if local is not None and not local.finished:
+        _emit_batch(local, batch_id, events)
+        return
+    cache = get_cache()
+    key = _batch_ack_key(run_id, batch_id)
+    if await asyncio.to_thread(cache.get, key):
+        return
+    if not tell_run(run_id, {"cmd": "emit_batch", "batch_id": batch_id, "events": events}):
+        raise RuntimeError("Владелец прогона недоступен")
+    async with asyncio.timeout(5):
+        while not await asyncio.to_thread(cache.get, key):
+            await asyncio.sleep(0.05)
+
+
+def _batch_ack_key(run_id: str, batch_id: str) -> str:
+    return f"run:{run_id}:batch:{batch_id}"
+
+
+def _emit_batch(owner: RunState, batch_id: str, events: list[dict]) -> None:
+    for number, event in enumerate(events):
+        owner.emit(event, event_key=f"{batch_id}:{number}")
 
 
 def tell_run(run_id: str, command: dict) -> bool:
@@ -414,7 +441,11 @@ async def _слушать_команды(state: "RunState") -> None:
             if приказ == "emit" and not state.finished:
                 событие = сообщение.get("event")
                 if isinstance(событие, dict):
-                    state.emit(событие, event_key=сообщение.get("event_key") or "")
+                    state.emit(событие)
+            if приказ == "emit_batch" and not state.finished:
+                batch_id, events = сообщение["batch_id"], сообщение["events"]
+                _emit_batch(state, batch_id, events)
+                await asyncio.to_thread(get_cache().set, _batch_ack_key(state.run_id, batch_id), True, 600)
             обработчик = state.commands.get(str(приказ))
             if обработчик is not None and not state.finished:
                 обработчик(сообщение)
