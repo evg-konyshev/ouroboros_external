@@ -8,11 +8,14 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
+from decimal import Decimal
 from enum import StrEnum
+from itertools import groupby
 
 from finengine.assistant.doc_pages import Match, Page
 from finengine.models.document import DocumentMeta
 from finengine.search.search import SearchHit
+from finengine.skills.cross_document import Comparison, Exclusion
 from finengine.skills.spec.dynamic_run import (
     ARTIFACTS_HEADER,
     ARTIFACTS_TITLE,
@@ -494,3 +497,67 @@ def search_hits(hits: list[SearchHit], *, degraded: bool, limit: int) -> str:
             heading = _search_locator(hit)
         excerpts = f"{heading}\n{hit.content}"[:max(room, 0)]
     return (head + excerpts.rstrip() + marker)[:limit]
+
+
+def _compare_rows(
+    head: str, rows: list[tuple[str, str]], *, limit: int,
+) -> str:
+    if len(head) + sum(len(line) + 1 for _, line in rows) <= limit:
+        return "\n".join([head, *(line for _, line in rows)])
+    kept = []
+    size = len(head)
+    for name, line in rows:
+        if size + len(line) + 1 + 96 > limit:
+            break
+        kept.append(line)
+        size += len(line) + 1
+    skipped = rows[len(kept):]
+    note = f"Не показано строк: {len(skipped)}."
+    names = ", ".join(dict.fromkeys(name for name, _ in skipped))
+    available = limit - size - len(note) - 2
+    if available > 1:
+        note += " " + (names if len(names) <= available else names[:available - 1] + "…")
+    return "\n".join([head, *kept, note])[:limit]
+
+
+def _excluded_comparison_rows(missing: tuple[str, ...], excluded: tuple[Exclusion, ...]) -> list[tuple[str, str]]:
+    rows = [(item, _table_row(("Не найден", item))) for item in missing]
+    rows.extend((item.fact_id, _table_row(("Исключён", item.fact_id, item.reason))) for item in excluded)
+    return rows
+
+
+def compare_no_inputs(missing: tuple[str, ...], excluded: tuple[Exclusion, ...], *, limit: int) -> str:
+    return _compare_rows(
+        refusal(Refusal.NO_INPUTS, "Для сравнения нужны хотя бы два факта действующих документов."),
+        _excluded_comparison_rows(missing, excluded), limit=limit,
+    )
+
+
+def _decimal_text(value: Decimal) -> str:
+    return format(value.normalize(), "f")
+
+
+def compared(
+    result: Comparison, missing: tuple[str, ...], excluded: tuple[Exclusion, ...], *, limit: int,
+) -> str:
+    rows = _excluded_comparison_rows(missing, (*excluded, *result.excluded))
+    for row in result.rows:
+        title = " · ".join(part for part in (row.label, row.concept, row.period) if part)
+        rows.append((title, _table_row((title, row.status, row.note))))
+        for fact in row.facts:
+            rows.append((title, _table_row((
+                fact.document.company_name, fact.document.filename, fact.document.source_type, fact.period,
+                _decimal_text(fact.value), fact.unit, f"[{fact.artifact_id}]",
+            ))))
+        for figure in row.figures:
+            rows.append((title, _table_row((
+                figure.label, _decimal_text(figure.value), ", ".join(f"[{item}]" for item in figure.fact_ids),
+            ))))
+    for label, gaps in groupby(result.gaps, key=lambda row: row.label):
+        periods = ", ".join(f"{row.concept} {row.period}" for row in gaps)
+        rows.append((label, _table_row(("Нет фактов", label, periods))))
+    rows.extend(
+        (document.filename, _table_row(("Покрытие", document.filename, "нет фактов")))
+        for document, count in result.coverage if count == 0
+    )
+    return _compare_rows(f"{Code.READY}\n## Сравнение", rows, limit=limit)

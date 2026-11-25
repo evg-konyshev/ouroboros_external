@@ -254,7 +254,7 @@ like) are skipped: those parts are not ported (non-goals in design).
 
 ## 8. Presets
 
-- [ ] 8.1 New pure module `skills/cross_document.py`, porting RFA `analysis/policy.py` and the
+- [x] 8.1 New pure module `skills/cross_document.py`, porting RFA `analysis/policy.py` and the
       preset rules (D9).
 
       RFA tests: **rewrite** `test_analysis_presets.py` (40). All of them use RFA's
@@ -295,7 +295,7 @@ like) are skipped: those parts are not ported (non-goals in design).
       - a rank without evaluative words.
 
       Fails before: the module does not exist.
-- [ ] 8.2 `assistant/compare_tool.py` and `ouro_view.compared`, wired into `ToolApi`,
+- [x] 8.2 `assistant/compare_tool.py` and `ouro_view.compared`, wired into `ToolApi`,
       `tool_names.py`, plugin `TOOLS`, compose `OUROBOROS_ENABLED_TOOLS`, `test_schema_budget.py`
       `EXPECTED_TOOLS` and the snapshots (`tools.snapshot.json`, `tool_names.json`,
       `dev_config.snapshot.json`). Tests in `tests/loop_tools/test_compare_tool.py`:
@@ -313,7 +313,7 @@ like) are skipped: those parts are not ported (non-goals in design).
       tied to RFA's scenario registry, which is not in this plan.
 
       Verify: `test_dev_config.py` and `test_schema_budget.py` are green (total ≤ 9,000 < 10,000).
-- [ ] 8.3 Add a presets section to `skills/aifa-planning/SKILL.md`: when to use each preset;
+- [x] 8.3 Add a presets section to `skills/aifa-planning/SKILL.md`: when to use each preset;
       include `TOTAL_ASSETS`/`SALES_REVENUE` ids for materiality; comment only on the shown
       numbers. Verify: new assertions in `test_planning_text.py` fail before and pass after.
 

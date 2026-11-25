@@ -61,8 +61,12 @@ class FixtureStore:
         if doc_id != DOC:
             return None
         return DocumentMeta(
-            doc_id=doc_id, owner_id=OWNER, filename="severstal-2024.pdf", company_name="Северсталь",
-            text_pages=self.text_pages, profile_id=self.profile_id,
+            doc_id=doc_id,
+            owner_id=OWNER,
+            filename="severstal-2024.pdf",
+            company_name="Северсталь",
+            text_pages=self.text_pages,
+            profile_id=self.profile_id,
         )
 
     def set_text_pages(self, doc_id: str, count: int, *, if_missing: bool = False) -> None:

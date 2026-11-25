@@ -124,6 +124,19 @@ TOOLS = (
         capability_class="read_only",
     ),
     Tool(
+        name="aifa_compare",
+        description="Сравнивает факты Case по id: динамика, компании или сверка источников.",
+        schema={
+            "type": "object",
+            "properties": {
+                "preset": {"type": "string", "enum": ["retrospective", "peer_comparison", "cross_source_verification"]},
+                "artifact_ids": {"type": "array", "items": {"type": "string"}, "minItems": 2, "maxItems": 20},
+            },
+            "required": ["preset", "artifact_ids"],
+        },
+        capability_class="read_only",
+    ),
+    Tool(
         name="aifa_atoms",
         description=(
             "Каталог атомов. list — карточки без кода; get — контракт, версия и исходный код одного атома; "

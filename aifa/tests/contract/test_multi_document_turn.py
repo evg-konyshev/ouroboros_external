@@ -87,3 +87,102 @@ async def test_the_folder_turn_lists_opens_and_finishes_two_reports(
     assert all(doc in results[1] for doc in docs) and outside not in results[1]
     assert "## Обзор хода" in results[4]
     assert all(f"{doc}.pdf" in results[5] for doc in docs)
+
+
+async def test_the_planner_compares_existing_case_facts_before_opening_a_report(
+    stand: ContractStand,
+    stub: StubModelAdmin,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from finengine.contracts import ExtractedMetric, NodeKey, ScalarFact
+    from finengine.contracts.case import CaseIdentity
+    from finengine.ingestion.document_store import get_store
+    from finengine.models.document import DocumentMeta
+    from finengine.store.cases import get_case_store
+
+    args = {"preset": "peer_comparison", "artifact_ids": ["e-sber", "e-vtb"]}
+    stub.use_scenario(
+        {
+            "name": "compare-existing-case-facts",
+            "rules": [
+                {"id": "title", "when": {"model": "stub-light"}, "reply": {"text": "Сравнение"}},
+                _call(1, "aifa_compare", args),
+                {
+                    "id": "answer",
+                    "when": {"model": "stub-main", "round": 2},
+                    "reply": {"text": "Готово."},
+                },
+            ],
+        }
+    )
+    with running_engine(stand, tmp_path, monkeypatch, real_documents=True) as engine:
+        owner, case_id = fixture.OWNER, fixture.PROJECT
+        cases = get_case_store()
+        cases.ensure_case(CaseIdentity(case_id=case_id, owner_id=str(owner)))
+        docs = get_store()
+        for doc_id, company, amount in (("sber", "Сбербанк", 100), ("vtb", "ВТБ", 90)):
+            version = f"version-{doc_id}"
+            docs.add_document(
+                DocumentMeta(
+                    doc_id=doc_id,
+                    filename=f"{company}.pdf",
+                    owner_id=owner,
+                    meta_card={"issuer": company},
+                ),
+                [],
+            )
+            docs.set_profile_id(doc_id, "ifrs_bank_ru")
+            cases.register_document(
+                owner,
+                case_id,
+                logical_name=doc_id,
+                document_id=doc_id,
+                document_version=version,
+            )
+            fact = ExtractedMetric(
+                concept="NET_INCOME",
+                period_ref="FY 2024",
+                scalar_fact=ScalarFact(
+                    evidence_id=f"e-{doc_id}",
+                    produced_by_atom="read.value",
+                    produced_by_atom_version="1",
+                    source_ref="source",
+                    period_ref="FY 2024",
+                    document_version=version,
+                    value=amount,
+                    unit="млн. руб.",
+                    basis="consolidated",
+                ),
+            )
+            cases.put_artifact(
+                owner,
+                case_id,
+                node_key=NodeKey(
+                    atom_name="read.value", atom_version="1", args_fingerprint=version
+                ),
+                output_type="ExtractedMetric",
+                payloads=(fact,),
+                concept="NET_INCOME",
+                entity_ref=None,
+                period_ref="FY 2024",
+                basis="consolidated",
+                document_version=version,
+                policy_version="test",
+            )
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                f"{engine}/chat/turns",
+                json={"message": "Сравни факты прошлого хода", "project_id": case_id},
+            )
+        assert response.status_code == 200, response.text
+        events = await screen_events(engine, response.json()["run_id"])
+
+    assert events[-1]["status"] == "succeeded"
+    asked = [entry for entry in stub.journal() if entry["model"] == "stub-main"]
+    assert [entry["rule"] for entry in asked] == ["1-aifa_compare", "answer"]
+    result = asked[-1]["last_tool_result"]
+    assert result.startswith("ГОТОВО\n")
+    assert "Сбербанк | Сбербанк.pdf" in result and "100 | RUB млн | [e-sber]" in result
+    assert "ВТБ | ВТБ.pdf" in result and "90 | RUB млн | [e-vtb]" in result
+    assert "Место: Сбербанк | 1 | [e-sber], [e-vtb]" in result

@@ -254,3 +254,18 @@ def test_a_file_built_in_the_sandbox_is_a_fallback_and_is_called_attached_only_w
     assert "Файл пользователю отдаёт служба — из `out/` принятого атома" in rule
     assert "`code_exec`, затем `file_read`" in rule and "запасной путь" in rule
     assert "Цикл исчерпан, а файла нет — так и скажи" in rule
+
+
+def test_comparison_presets_are_calculated_by_the_service_from_case_facts() -> None:
+    section = guide().split("### Сравнение", 1)[1].split("###", 1)[0]
+
+    for phrase in (
+        "aifa_compare",
+        "retrospective",
+        "peer_comparison",
+        "cross_source_verification",
+        "TOTAL_ASSETS",
+        "SALES_REVENUE",
+        "только показанные числа",
+    ):
+        assert phrase in section

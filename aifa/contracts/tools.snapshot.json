@@ -1,8 +1,8 @@
 {
   "snapshot_version": 1,
-  "adr": "ADR-0103",
-  "note": "Адресация инструментов цикла по документу и пагинация списка (ADR-0103, ADR-0104).",
-  "budget_chars": 6833,
+  "adr": "ADR-0105",
+  "note": "Адресация циклов, поиск и сравнение фактов (ADR-0103, ADR-0104, ADR-0105).",
+  "budget_chars": 7300,
   "tools": {
     "aifa_open": {
       "arguments": [
@@ -66,6 +66,20 @@
       ],
       "required": [
         "query"
+      ],
+      "safety_policy": "skip",
+      "capability_class": "read_only",
+      "timeout_sec": 300,
+      "result_limit": 12000
+    },
+    "aifa_compare": {
+      "arguments": [
+        "artifact_ids",
+        "preset"
+      ],
+      "required": [
+        "artifact_ids",
+        "preset"
       ],
       "safety_policy": "skip",
       "capability_class": "read_only",
